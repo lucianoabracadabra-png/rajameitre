@@ -1,0 +1,6 @@
+{
+  "name": "GarçON — BH Raja Hotel",
+  "description": "Alta gastronomia e comanda digital imersiva para eventos exclusivos no BH Raja Hotel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

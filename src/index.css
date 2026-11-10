@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+    --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-mono: 'Space Mono', monospace;
+    --color-raja-navy: #00001f;
+    --color-raja-gold: #d3a809;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #00001f;
+    color: #e5e7eb;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono-receipt {
+  font-family: var(--font-mono);
+}
+
+/* Minimalist luxury glassmorphism with hotel midnight navy & gold */
+.glass-panel {
+  background: rgba(7, 10, 36, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card {
+  background: rgba(10, 14, 45, 0.5);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card:hover {
+  background: rgba(14, 20, 60, 0.6);
+  border-color: rgba(211, 168, 9, 0.3);
+}
+
+.glass-card-selected {
+  background: linear-gradient(135deg, rgba(20, 26, 75, 0.8) 0%, rgba(9, 13, 40, 0.95) 100%);
+  border: 1px solid rgba(211, 168, 9, 0.7);
+  box-shadow: 0 0 25px -5px rgba(211, 168, 9, 0.15);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #00001f;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(211, 168, 9, 0.3);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(211, 168, 9, 0.6);
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+}
