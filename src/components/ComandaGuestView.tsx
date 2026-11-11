@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { EventConfig, MenuItem, GuestOrder } from '../types';
+import type { SubmitOrderResult } from '../lib/api';
 import { FiscalReceipt } from './FiscalReceipt';
 import { DietaryIcons } from './DietaryIcons';
 import {
@@ -24,13 +25,15 @@ import {
 
 interface ComandaGuestViewProps {
   eventConfig: EventConfig;
-  onOrderCreated: (order: GuestOrder) => void;
+  // Envia a comanda ao servidor, que confere a senha do evento.
+  onSubmitOrder: (order: GuestOrder, code: string) => Promise<SubmitOrderResult>;
+  // Pede a senha do Maître antes de abrir o ambiente da equipe.
   onOpenAdmin: () => void;
 }
 
 export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
   eventConfig,
-  onOrderCreated,
+  onSubmitOrder,
   onOpenAdmin,
 }) => {
   // Guest state (NO TABLE FIELD)
@@ -50,6 +53,7 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
   // Order submission
   const [submittedOrder, setSubmittedOrder] = useState<GuestOrder | null>(null);
   const [formError, setFormError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const fireLuxuryConfetti = () => {
     try {
@@ -64,23 +68,14 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
     }
   };
 
-  const handleSubmitOrder = (e: React.FormEvent) => {
+  const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setFormError('');
     setPasswordError('');
 
     if (!guestName.trim()) {
       setFormError('Por favor, informe seu nome para a comanda.');
-      return;
-    }
-
-    if (
-      eventConfig.accessCode &&
-      password.trim().toUpperCase() !== eventConfig.accessCode.toUpperCase()
-    ) {
-      setPasswordError(
-        `Senha de acesso incorreta. (Senha do evento: ${eventConfig.accessCode})`
-      );
       return;
     }
 
@@ -106,7 +101,21 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
       authCode: generateAuthHash(guestName, eventConfig.title),
     };
 
-    onOrderCreated(newOrder);
+    setSubmitting(true);
+    const result = await onSubmitOrder(newOrder, password.trim());
+    setSubmitting(false);
+
+    if (!result.ok) {
+      if (result.error === 'bad_code') {
+        setPasswordError('Senha de acesso incorreta.');
+      } else if (result.error === 'no_event') {
+        setFormError('Este evento não está mais disponível. Fale com a equipe do hotel.');
+      } else {
+        setFormError('Não foi possível enviar sua comanda. Verifique a conexão e tente novamente.');
+      }
+      return;
+    }
+
     setSubmittedOrder(newOrder);
     fireLuxuryConfetti();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -214,13 +223,6 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                   <KeyRound className="w-3.5 h-3.5 text-[#d3a809]" />
                   Senha do Evento *
                 </label>
-                <button
-                  type="button"
-                  onClick={() => setPassword(eventConfig.accessCode)}
-                  className="text-[10px] text-[#d3a809] hover:underline cursor-pointer"
-                >
-                  Preencher ({eventConfig.accessCode})
-                </button>
               </div>
               <input
                 type="password"
@@ -409,9 +411,10 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
           <button
             type="button"
             onClick={handleSubmitOrder}
-            className="w-full py-3.5 bg-gradient-to-r from-[#d3a809] via-[#e5bc2c] to-[#b38b00] text-neutral-950 text-xs font-bold tracking-wider uppercase rounded-xl hover:from-[#e3b819] hover:to-[#c49800] transition-all shadow-lg active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
+            disabled={submitting}
+            className="w-full disabled:opacity-60 disabled:cursor-wait py-3.5 bg-gradient-to-r from-[#d3a809] via-[#e5bc2c] to-[#b38b00] text-neutral-950 text-xs font-bold tracking-wider uppercase rounded-xl hover:from-[#e3b819] hover:to-[#c49800] transition-all shadow-lg active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
           >
-            <span>Emitir Minha Comanda</span>
+            <span>{submitting ? 'Enviando…' : 'Emitir Minha Comanda'}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
