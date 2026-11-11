@@ -1,11 +1,13 @@
 import React, { useRef } from 'react';
-import { GuestOrder, EventConfig } from '../types';
+import { GuestOrder, EventConfig, VENUE_TRANSLATIONS, LanguageMode } from '../types';
 import { HOTEL_INFO } from '../data/menuDatabase';
+import { formatDateFullExtenso } from '../utils/formatters';
 import { Printer, Check, Copy, Sparkles, Utensils, RotateCcw, X } from 'lucide-react';
 
 interface FiscalReceiptProps {
   order: GuestOrder;
   eventConfig: EventConfig;
+  lang?: LanguageMode;
   onReset: () => void;
   onClose?: () => void;
 }
@@ -13,12 +15,15 @@ interface FiscalReceiptProps {
 export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
   order,
   eventConfig,
+  lang = 'pt',
   onReset,
   onClose,
 }) => {
   const [copied, setCopied] = React.useState(false);
   const receiptRef = useRef<HTMLDivElement>(null);
   const handleClose = onClose || onReset;
+
+  const isEn = lang === 'en';
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(order.code);
@@ -30,19 +35,25 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
     window.print();
   };
 
+  const venueLabel = isEn && VENUE_TRANSLATIONS[order.eventLocation]
+    ? VENUE_TRANSLATIONS[order.eventLocation].en
+    : order.eventLocation;
+
   return (
     <div className="w-full max-w-md mx-auto flex flex-col items-center relative">
       {/* Top Banner */}
       <div className="w-full text-center mb-5">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#d3a809]/10 border border-[#d3a809]/20 text-[#d3a809] text-xs tracking-wider uppercase mb-2">
           <Sparkles className="w-3.5 h-3.5" />
-          Comanda Emitida
+          {isEn ? 'Ticket Issued' : 'Comanda Emitida'}
         </div>
         <h2 className="text-2xl font-bold text-white tracking-tight font-display">
-          Sua Comanda de Evento
+          {isEn ? 'Your Event Ticket' : 'Sua Comanda de Evento'}
         </h2>
         <p className="text-xs text-neutral-400 mt-0.5">
-          Apresente este comprovante ao garçom quando solicitado.
+          {isEn
+            ? 'Present this receipt to the waiter when requested.'
+            : 'Apresente este comprovante ao garçom quando solicitado.'}
         </p>
       </div>
 
@@ -53,7 +64,7 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
           className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.1] text-white text-xs font-medium uppercase tracking-wider rounded-lg transition-colors cursor-pointer"
         >
           <Printer className="w-3.5 h-3.5 text-[#d3a809]" />
-          Imprimir Cupom
+          {isEn ? 'Print Ticket' : 'Imprimir Cupom'}
         </button>
 
         <button
@@ -63,12 +74,12 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
           {copied ? (
             <>
               <Check className="w-3.5 h-3.5 text-emerald-400" />
-              Copiado!
+              {isEn ? 'Copied!' : 'Copiado!'}
             </>
           ) : (
             <>
               <Copy className="w-3.5 h-3.5 text-neutral-400" />
-              Copiar ({order.code})
+              {isEn ? `Copy (${order.code})` : `Copiar (${order.code})`}
             </>
           )}
         </button>
@@ -78,7 +89,7 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
           className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-[#d3a809]/20 border border-[#d3a809]/30 text-[#d3a809] text-xs font-semibold uppercase tracking-wider rounded-lg hover:bg-[#d3a809]/30 transition-colors cursor-pointer"
         >
           <RotateCcw className="w-3.5 h-3.5" />
-          Novo Pedido
+          {isEn ? 'New Order' : 'Novo Pedido'}
         </button>
       </div>
 
@@ -92,7 +103,7 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
           <button
             onClick={handleClose}
             className="absolute top-2.5 right-2.5 z-20 p-1.5 rounded-full hover:bg-neutral-200 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer no-print"
-            title="Fechar comanda"
+            title={isEn ? 'Close' : 'Fechar'}
             aria-label="Fechar"
           >
             <X className="w-3.5 h-3.5" />
@@ -114,38 +125,38 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
             CNPJ: {HOTEL_INFO.cnpj}
           </div>
           <div className="mt-1.5 text-[10px] font-bold tracking-wider text-neutral-800 bg-neutral-200/80 py-0.5 px-2 rounded">
-            COMPROVANTE DE COMANDA · BH RAJA
+            {isEn ? 'BH RAJA · VIP EVENT TICKET' : 'COMPROVANTE DE COMANDA · BH RAJA'}
           </div>
         </div>
 
         {/* Order Details Matrix */}
         <div className="py-2.5 border-b border-dashed border-neutral-400 text-[11px] space-y-1">
           <div className="flex justify-between items-baseline">
-            <span className="text-neutral-500">COMANDA:</span>
+            <span className="text-neutral-500">{isEn ? 'TICKET #:' : 'COMANDA:'}</span>
             <span className="font-bold text-sm tracking-wider text-neutral-900">
               {order.code}
             </span>
           </div>
           <div className="flex justify-between">
-            <span className="text-neutral-500">CONVIDADO(A):</span>
+            <span className="text-neutral-500">{isEn ? 'GUEST:' : 'CONVIDADO(A):'}</span>
             <span className="font-bold text-neutral-900 uppercase">
               {order.guestName}
             </span>
           </div>
           <div className="flex justify-between">
-            <span className="text-neutral-500">EVENTO:</span>
+            <span className="text-neutral-500">{isEn ? 'EVENT:' : 'EVENTO:'}</span>
             <span className="text-right font-medium text-neutral-800 max-w-[240px] truncate">
               {order.eventTitle}
             </span>
           </div>
           <div className="flex justify-between">
-            <span className="text-neutral-500">ESPAÇO:</span>
-            <span className="text-neutral-800 font-semibold">{order.eventLocation}</span>
+            <span className="text-neutral-500">{isEn ? 'VENUE:' : 'ESPAÇO:'}</span>
+            <span className="text-neutral-800 font-semibold">{venueLabel}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-neutral-500">DATA & HORA:</span>
+            <span className="text-neutral-500">{isEn ? 'DATE & TIME:' : 'DATA & HORA:'}</span>
             <span className="text-neutral-800">
-              {order.eventDate} às {order.createdAt}
+              {formatDateFullExtenso(eventConfig.date || order.eventDate, lang)} {isEn ? 'at' : 'às'} {order.createdAt}
             </span>
           </div>
         </div>
@@ -153,15 +164,15 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
         {/* Itemized Table */}
         <div className="py-2.5 border-b border-dashed border-neutral-400 space-y-2">
           <div className="flex justify-between text-[10px] font-bold text-neutral-500 uppercase tracking-wider pb-1 border-b border-neutral-200">
-            <span>ITEM / ESPECIFICAÇÃO</span>
-            <span>VALOR</span>
+            <span>{isEn ? 'ITEM / SPECIFICATION' : 'ITEM / ESPECIFICAÇÃO'}</span>
+            <span>{isEn ? 'VALUE' : 'VALOR'}</span>
           </div>
 
-          {/* Prato Principal */}
+          {/* Prato Principal (Only one name) */}
           <div className="py-1">
             <div className="flex justify-between items-start gap-2">
               <div className="font-bold text-neutral-900">
-                01. [PRATO PRINCIPAL]
+                01. [{isEn ? 'MAIN DISH' : 'PRATO PRINCIPAL'}]
               </div>
               <div className="font-bold tabular-nums text-neutral-900">
                 R$ 0,00
@@ -172,12 +183,12 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
             </div>
           </div>
 
-          {/* Sobremesa (se houver) */}
+          {/* Sobremesa */}
           {order.dessert && (
             <div className="py-1 border-t border-neutral-200 pt-1.5">
               <div className="flex justify-between items-start gap-2">
                 <div className="font-bold text-neutral-900">
-                  02. [SOBREMESA]
+                  02. [{isEn ? 'DESSERT' : 'SOBREMESA'}]
                 </div>
                 <div className="font-bold tabular-nums text-neutral-900">
                   R$ 0,00
@@ -189,24 +200,26 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
             </div>
           )}
 
-          {/* Bebida Não Alcoólica Inclusa (Sempre vem 01 inclusa) */}
+          {/* Bebida Não Alcoólica: 01 UND (NOT à vontade!) */}
           <div className="py-1 border-t border-neutral-200 pt-1.5">
             <div className="flex justify-between items-start gap-2">
               <div className="font-bold text-neutral-900">
-                {order.dessert ? '03.' : '02.'} [BEBIDA NÃO ALCOÓLICA CORTESIA]
+                {order.dessert ? '03.' : '02.'} [{isEn ? 'COMPLIMENTARY BEVERAGE (01 UNIT)' : 'BEBIDA NÃO ALCOÓLICA (01 UND) CORTESIA'}]
               </div>
               <div className="font-bold tabular-nums text-neutral-900">
                 R$ 0,00
               </div>
             </div>
             <div className="text-[10px] text-neutral-700 pl-3">
-              01 Bebida não alcoólica servida à vontade
+              {isEn
+                ? '01 non-alcoholic beverage included (01 unit)'
+                : '01 Bebida não alcoólica inclusa (01 und)'}
             </div>
           </div>
 
           {order.notes && (
             <div className="text-[10px] text-neutral-600 bg-neutral-100 p-2 rounded mt-1.5">
-              <span className="font-bold text-neutral-800">OBS: </span>
+              <span className="font-bold text-neutral-800">{isEn ? 'NOTES: ' : 'OBS: '}</span>
               {order.notes}
             </div>
           )}
@@ -219,17 +232,17 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
             <span className="tabular-nums">R$ 0,00</span>
           </div>
           <div className="flex justify-between text-emerald-800 font-medium">
-            <span>CORTESIA EVENTO VIP (ALL-INCLUSIVE):</span>
+            <span>{isEn ? 'VIP COURTESY (EVENT ALL-INCLUSIVE):' : 'CORTESIA EVENTO VIP (ALL-INCLUSIVE):'}</span>
             <span className="tabular-nums">- R$ 0,00</span>
           </div>
           <div className="flex justify-between text-sm font-bold text-neutral-900 pt-1 border-t border-neutral-300">
-            <span>TOTAL A PAGAR:</span>
+            <span>{isEn ? 'TOTAL TO PAY:' : 'TOTAL A PAGAR:'}</span>
             <span className="tabular-nums">R$ 0,00</span>
           </div>
           <div className="flex justify-between text-[10px] text-neutral-500 pt-0.5">
-            <span>FORMA DE PGTO:</span>
+            <span>{isEn ? 'PAYMENT METHOD:' : 'FORMA DE PGTO:'}</span>
             <span className="font-semibold text-neutral-800">
-              FATURAMENTO EVENTO · BH RAJA
+              {isEn ? 'EVENT BILLING · BH RAJA' : 'FATURAMENTO EVENTO · BH RAJA'}
             </span>
           </div>
         </div>
@@ -238,12 +251,12 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
         <div className="pt-3 flex items-center justify-between gap-4">
           <div className="text-left space-y-0.5 text-[10px] text-neutral-600 flex-1">
             <div className="font-mono font-bold text-neutral-800">
-              AUTENTICAÇÃO:
+              {isEn ? 'AUTHENTICATION:' : 'AUTENTICAÇÃO:'}
             </div>
             <div className="font-mono text-neutral-900 text-[9px]">
               {order.authCode}
             </div>
-            <div>STATUS: [REGISTRADO NO EVENTO]</div>
+            <div>STATUS: [{isEn ? 'CONFIRMED' : 'REGISTRADO NO EVENTO'}]</div>
           </div>
 
           <div className="w-16 h-16 bg-white p-1 border border-neutral-400 flex flex-col items-center justify-center shrink-0 rounded">
@@ -272,13 +285,17 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
         </div>
 
         <div className="text-center text-[10px] text-neutral-500 pt-3 mt-2 border-t border-neutral-300">
-          BH Raja Hotel · {order.eventLocation}
+          BH Raja Hotel · {venueLabel}
         </div>
       </div>
 
       <div className="mt-4 text-center text-xs text-neutral-400 no-print flex items-center gap-1.5">
         <Utensils className="w-3.5 h-3.5 text-[#d3a809]" />
-        <span>Comanda registrada para pré-produção do buffet.</span>
+        <span>
+          {isEn
+            ? 'Ticket registered for kitchen preparation.'
+            : 'Comanda registrada para pré-produção do buffet.'}
+        </span>
       </div>
     </div>
   );

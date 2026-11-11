@@ -1,20 +1,21 @@
 import React, { useEffect } from 'react';
-import { GuestOrder, EventConfig } from '../types';
+import { GuestOrder, EventConfig, LanguageMode } from '../types';
 import { FiscalReceipt } from './FiscalReceipt';
 import { X } from 'lucide-react';
 
 interface ReceiptModalProps {
   order: GuestOrder | null;
   eventConfig: EventConfig;
+  lang?: LanguageMode;
   onClose: () => void;
 }
 
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   order,
   eventConfig,
+  lang = 'pt',
   onClose,
 }) => {
-  // Close on Escape key press
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -30,7 +31,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto cursor-pointer"
+      className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto cursor-pointer"
       role="dialog"
       aria-modal="true"
     >
@@ -38,7 +39,6 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
         onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-md my-auto py-4 cursor-default"
       >
-        {/* Top small X close button bar */}
         <div className="flex justify-end mb-2 no-print">
           <button
             onClick={onClose}
@@ -54,6 +54,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
         <FiscalReceipt
           order={order}
           eventConfig={eventConfig}
+          lang={lang}
           onReset={onClose}
           onClose={onClose}
         />

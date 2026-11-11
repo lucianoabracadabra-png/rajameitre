@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { EventConfig, MenuItem, GuestOrder } from '../types';
+import { EventConfig, MenuItem, GuestOrder, LanguageMode, VENUE_TRANSLATIONS } from '../types';
 import type { SubmitOrderResult } from '../lib/api';
 import { FiscalReceipt } from './FiscalReceipt';
 import { DietaryIcons } from './DietaryIcons';
@@ -8,10 +8,12 @@ import {
   generateAuthHash,
   getCurrentTimeFormatted,
   getCurrentDateFormatted,
+  formatDateFullExtenso,
+  formatTimeRangeExtenso,
+  normalizePassword,
 } from '../utils/formatters';
 import confetti from 'canvas-confetti';
 import {
-  Sparkles,
   Check,
   User,
   KeyRound,
@@ -21,13 +23,13 @@ import {
   SlidersHorizontal,
   MapPin,
   Calendar,
+  Clock,
+  Languages,
 } from 'lucide-react';
 
 interface ComandaGuestViewProps {
   eventConfig: EventConfig;
-  // Envia a comanda ao servidor, que confere a senha do evento.
   onSubmitOrder: (order: GuestOrder, code: string) => Promise<SubmitOrderResult>;
-  // Pede a senha do Maître antes de abrir o ambiente da equipe.
   onOpenAdmin: () => void;
 }
 
@@ -36,12 +38,16 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
   onSubmitOrder,
   onOpenAdmin,
 }) => {
-  // Guest state (NO TABLE FIELD)
+  // Language toggle (PT-BR vs EN-US)
+  const [lang, setLang] = useState<LanguageMode>('pt');
+  const isEn = lang === 'en';
+
+  // Guest identification state
   const [guestName, setGuestName] = useState('');
   const [password, setPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
 
-  // Selections (NO IMAGES, pure typography and tactile glassmorphic cards)
+  // Selections
   const [selectedMainDish, setSelectedMainDish] = useState<MenuItem | null>(
     eventConfig.activeDishes[0] || null
   );
@@ -55,11 +61,19 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Formatted date and time por extenso
+  const datePorExtenso = formatDateFullExtenso(eventConfig.date, lang);
+  const timePorExtenso = formatTimeRangeExtenso(
+    eventConfig.timeStart || '11:30',
+    eventConfig.timeEnd || '14:30',
+    lang
+  );
+
   const fireLuxuryConfetti = () => {
     try {
       confetti({
         particleCount: 50,
-        spread: 50,
+        spread: 55,
         origin: { y: 0.6 },
         colors: ['#d3a809', '#f3cb38', '#ffffff', '#a88200'],
       });
@@ -75,26 +89,44 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
     setPasswordError('');
 
     if (!guestName.trim()) {
-      setFormError('Por favor, informe seu nome para a comanda.');
+      setFormError(
+        isEn
+          ? 'Please enter your full name for the ticket.'
+          : 'Por favor, informe seu nome para a comanda.'
+      );
       return;
     }
 
     if (!selectedMainDish) {
-      setFormError('Por favor, selecione seu prato principal.');
+      setFormError(
+        isEn
+          ? 'Please select your main course.'
+          : 'Por favor, selecione seu prato principal.'
+      );
+      return;
+    }
+
+    if (!password.trim()) {
+      setPasswordError(
+        isEn ? 'Please enter the event password.' : 'Por favor, digite a senha do evento.'
+      );
       return;
     }
 
     const newOrder: GuestOrder = {
       id: `ord-${Date.now()}`,
       code: generateOrderCode(),
+      eventId: eventConfig.id,
       guestName: guestName.trim(),
-      pinUsed: password.trim(),
-      eventTitle: eventConfig.title,
+      pinUsed: normalizePassword(password),
+      eventTitle: eventConfig.title, // NUNCA traduzido
       eventDate: getCurrentDateFormatted(),
       eventLocation: eventConfig.location,
       mainDish: selectedMainDish,
       dessert: eventConfig.allowDessert ? selectedDessert || undefined : undefined,
-      beverageNotice: '01 Bebida Não Alcoólica Inclusa (Cortesia BH Raja)',
+      beverageNotice: isEn
+        ? '01 Non-Alcoholic Beverage (01 unit) Included'
+        : '01 Bebida Não Alcoólica (01 und) Inclusa',
       notes: kitchenNotes.trim() || undefined,
       totalCost: 0,
       createdAt: getCurrentTimeFormatted(),
@@ -107,11 +139,23 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
 
     if (!result.ok) {
       if (result.error === 'bad_code') {
-        setPasswordError('Senha de acesso incorreta.');
+        setPasswordError(
+          isEn
+            ? 'Incorrect event access password. Please verify.'
+            : 'Senha de acesso incorreta para este evento.'
+        );
       } else if (result.error === 'no_event') {
-        setFormError('Este evento não está mais disponível. Fale com a equipe do hotel.');
+        setFormError(
+          isEn
+            ? 'This event is no longer active. Please contact hotel staff.'
+            : 'Este evento não está mais disponível. Fale com a equipe do hotel.'
+        );
       } else {
-        setFormError('Não foi possível enviar sua comanda. Verifique a conexão e tente novamente.');
+        setFormError(
+          isEn
+            ? 'Could not submit your ticket. Please check your connection and retry.'
+            : 'Não foi possível enviar sua comanda. Verifique a conexão e tente novamente.'
+        );
       }
       return;
     }
@@ -130,6 +174,16 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
     setPasswordError('');
   };
 
+  // Translated venue name (predefined dictionary)
+  const venueLabel = isEn && VENUE_TRANSLATIONS[eventConfig.location]
+    ? VENUE_TRANSLATIONS[eventConfig.location].en
+    : eventConfig.location;
+
+  // Translated subtitle if available in EN
+  const displaySubtitle = isEn && eventConfig.subtitleEn
+    ? eventConfig.subtitleEn
+    : eventConfig.subtitle;
+
   if (submittedOrder) {
     return (
       <div
@@ -140,6 +194,7 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
           <FiscalReceipt
             order={submittedOrder}
             eventConfig={eventConfig}
+            lang={lang}
             onReset={handleReset}
             onClose={handleReset}
           />
@@ -155,8 +210,8 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
 
   return (
     <div className="min-h-screen flex flex-col justify-between max-w-2xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-      <div className="space-y-8">
-        {/* TOP BRAND SIGNATURE & STAFF ICON */}
+      <div className="space-y-6">
+        {/* TOP BRAND SIGNATURE & DISCREET MAÎTRE BUTTON */}
         <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
           <div className="flex items-center gap-2">
             <span className="text-lg font-bold tracking-widest text-[#d3a809] uppercase font-display">
@@ -167,63 +222,99 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
             </span>
           </div>
 
-          {/* Discreet Maître exit switch for venue shared devices */}
           <button
             onClick={onOpenAdmin}
             className="text-[11px] text-neutral-400 hover:text-[#d3a809] flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-white/[0.05] cursor-pointer"
             title="Acesso da Equipe do Hotel"
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Maître</span>
+            <span>Maître</span>
           </button>
         </div>
 
-        {/* EVENT IDENTIFICATION (SEMPRE NO HOTEL COM SALA FIXA) */}
+        {/* EVENT IDENTIFICATION SECTION (CLIENT CANNOT PICK EVENT - DEDICATED DIRECT LINK) */}
         <div className="space-y-3">
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold tracking-wider text-[#d3a809] uppercase">
               <span className="flex items-center gap-1">
                 <MapPin className="w-3.5 h-3.5" />
-                BH Raja Hotel · {eventConfig.location}
+                BH Raja Hotel · {venueLabel}
               </span>
               <span>·</span>
-              <span className="flex items-center gap-1 text-neutral-400">
-                <Calendar className="w-3.5 h-3.5" />
-                {eventConfig.date}
+              <span className="flex items-center gap-1 text-neutral-300">
+                <Calendar className="w-3.5 h-3.5 text-neutral-400" />
+                {datePorExtenso}
+              </span>
+              <span>·</span>
+              <span className="flex items-center gap-1 text-neutral-300">
+                <Clock className="w-3.5 h-3.5 text-[#d3a809]" />
+                {timePorExtenso}
               </span>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight font-display">
+            {/* EVENT TITLE (NUNCA TRADUZIDO) */}
+            <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight font-display pt-1">
               {eventConfig.title}
             </h1>
-            <p className="text-xs text-neutral-400 font-light">
-              {eventConfig.subtitle}
+            <p className="text-xs text-neutral-300 font-light leading-relaxed">
+              {displaySubtitle}
             </p>
+          </div>
+
+          {/* LANGUAGE TOGGLE BUTTON NEAR IDENTIFICATION SECTION */}
+          <div className="pt-2 flex items-center justify-between border-t border-white/[0.06]">
+            <div className="text-[11px] text-neutral-400 uppercase tracking-wider font-medium flex items-center gap-1.5">
+              <Languages className="w-3.5 h-3.5 text-[#d3a809]" />
+              {isEn ? 'Language:' : 'Idioma:'}
+            </div>
+
+            <div className="inline-flex items-center p-0.5 rounded-lg bg-black/60 border border-white/[0.12]">
+              <button
+                type="button"
+                onClick={() => setLang('pt')}
+                className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-all cursor-pointer ${
+                  !isEn
+                    ? 'bg-[#d3a809] text-neutral-950 font-bold shadow-sm'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                PT-BR
+              </button>
+              <button
+                type="button"
+                onClick={() => setLang('en')}
+                className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-all cursor-pointer ${
+                  isEn
+                    ? 'bg-[#d3a809] text-neutral-950 font-bold shadow-sm'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                EN-US
+              </button>
+            </div>
           </div>
 
           {/* Guest Name & Event Password Inputs */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             <div className="space-y-1">
-              <label className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider flex items-center gap-1.5">
+              <label className="text-[11px] font-medium text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
                 <User className="w-3.5 h-3.5 text-[#d3a809]" />
-                Seu Nome Completo *
+                {isEn ? 'Your Full Name *' : 'Seu Nome Completo *'}
               </label>
               <input
                 type="text"
                 value={guestName}
                 onChange={(e) => setGuestName(e.target.value)}
-                placeholder="Ex: Dra. Mariana Albuquerque"
+                placeholder={isEn ? 'e.g. Dr. John Doe' : 'Ex: Dra. Mariana Albuquerque'}
                 className="w-full px-3.5 py-2.5 bg-black/40 border border-white/[0.1] focus:border-[#d3a809] rounded-xl text-xs text-white placeholder-neutral-500 outline-none transition-all"
               />
             </div>
 
             <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <KeyRound className="w-3.5 h-3.5 text-[#d3a809]" />
-                  Senha do Evento *
-                </label>
-              </div>
+              <label className="text-[11px] font-medium text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
+                <KeyRound className="w-3.5 h-3.5 text-[#d3a809]" />
+                {isEn ? 'Event Password *' : 'Senha do Evento *'}
+              </label>
               <input
                 type="password"
                 value={password}
@@ -231,14 +322,14 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                   setPassword(e.target.value);
                   setPasswordError('');
                 }}
-                placeholder="Senha de acesso"
+                placeholder={isEn ? 'Event password (e.g. 1123@ALM)' : 'Senha (ex: 1123@ALM)'}
                 className="w-full px-3.5 py-2.5 bg-black/40 border border-white/[0.1] focus:border-[#d3a809] rounded-xl text-xs text-white placeholder-neutral-500 outline-none transition-all font-mono tracking-wider uppercase"
               />
             </div>
           </div>
 
           {passwordError && (
-            <div className="flex items-center gap-2 text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-lg">
+            <div className="flex items-center gap-2 text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-xl">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{passwordError}</span>
             </div>
@@ -249,22 +340,23 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
         <section className="space-y-3">
           <div className="flex items-baseline justify-between border-b border-white/[0.08] pb-1.5">
             <h2 className="text-lg font-bold text-white tracking-tight font-display">
-              Prato Principal
+              {isEn ? 'Main Course' : 'Prato Principal'}
             </h2>
             <span className="text-[11px] text-neutral-400">
-              Escolha uma opção
+              {isEn ? 'Select one dish' : 'Escolha uma opção'}
             </span>
           </div>
 
           <div className="space-y-2.5">
             {eventConfig.activeDishes.map((dish) => {
               const isSelected = selectedMainDish?.id === dish.id;
+              const dishDescription = isEn && dish.descriptionEn ? dish.descriptionEn : dish.description;
 
               return (
                 <div
                   key={dish.id}
                   onClick={() => setSelectedMainDish(dish)}
-                  className={`p-4 rounded-xl cursor-pointer transition-all duration-200 ${
+                  className={`p-4 rounded-xl cursor-pointer transition-all duration-200 active:scale-[0.99] ${
                     isSelected ? 'glass-card-selected' : 'glass-card'
                   }`}
                 >
@@ -281,14 +373,8 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                         )}
                       </div>
 
-                      {dish.frenchTitle && (
-                        <p className="text-xs text-neutral-400">
-                          {dish.frenchTitle}
-                        </p>
-                      )}
-
                       <p className="text-xs text-neutral-300 leading-relaxed font-light">
-                        {dish.description}
+                        {dishDescription}
                       </p>
 
                       <div className="pt-1.5">
@@ -297,9 +383,9 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                     </div>
 
                     <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                      className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 transition-all ${
                         isSelected
-                          ? 'bg-[#d3a809] text-neutral-950 font-bold shadow-sm'
+                          ? 'bg-[#d3a809] text-neutral-950 font-bold shadow-sm scale-110'
                           : 'border border-neutral-700'
                       }`}
                     >
@@ -312,12 +398,12 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
           </div>
         </section>
 
-        {/* 2. SOBREMESA (SE HABILITADA NO EVENTO) */}
+        {/* 2. SOBREMESA */}
         {eventConfig.allowDessert && eventConfig.activeDesserts.length > 0 && (
           <section className="space-y-3">
             <div className="flex items-baseline justify-between border-b border-white/[0.08] pb-1.5">
               <h2 className="text-lg font-bold text-white tracking-tight font-display">
-                Sobremesa
+                {isEn ? 'Dessert' : 'Sobremesa'}
               </h2>
               <span className="text-[11px] text-neutral-400">
                 Pâtisserie
@@ -327,12 +413,13 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
             <div className="space-y-2.5">
               {eventConfig.activeDesserts.map((dessert) => {
                 const isSelected = selectedDessert?.id === dessert.id;
+                const dessertDesc = isEn && dessert.descriptionEn ? dessert.descriptionEn : dessert.description;
 
                 return (
                   <div
                     key={dessert.id}
                     onClick={() => setSelectedDessert(dessert)}
-                    className={`p-4 rounded-xl cursor-pointer transition-all duration-200 ${
+                    className={`p-4 rounded-xl cursor-pointer transition-all duration-200 active:scale-[0.99] ${
                       isSelected ? 'glass-card-selected' : 'glass-card'
                     }`}
                   >
@@ -342,14 +429,8 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                           {dessert.name}
                         </h3>
 
-                        {dessert.frenchTitle && (
-                          <p className="text-xs text-neutral-400">
-                            {dessert.frenchTitle}
-                          </p>
-                        )}
-
                         <p className="text-xs text-neutral-300 leading-relaxed font-light">
-                          {dessert.description}
+                          {dessertDesc}
                         </p>
 
                         <div className="pt-1.5">
@@ -358,9 +439,9 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                       </div>
 
                       <div
-                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 transition-all ${
                           isSelected
-                            ? 'bg-[#d3a809] text-neutral-950 font-bold shadow-sm'
+                            ? 'bg-[#d3a809] text-neutral-950 font-bold shadow-sm scale-110'
                             : 'border border-neutral-700'
                         }`}
                       >
@@ -374,28 +455,36 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
           </section>
         )}
 
-        {/* BEVERAGE CORTESIA NOTICE */}
+        {/* BEVERAGE CORTESIA NOTICE: 01 UND */}
         <div className="p-3.5 rounded-xl bg-[#d3a809]/10 border border-[#d3a809]/20 flex items-center gap-3">
           <GlassWater className="w-4 h-4 text-[#d3a809] shrink-0" />
           <div className="text-xs text-neutral-300 leading-relaxed">
             <span className="font-semibold text-[#d3a809]">
-              01 Bebida não alcoólica inclusa:
+              {isEn ? '01 Non-Alcoholic Beverage included (01 unit):' : '01 Bebida não alcoólica inclusa (01 und):'}
             </span>{' '}
-            Águas minerais aromatizadas, sucos naturais, chás gelados botânicos ou refrigerantes servidos à vontade pela equipe do salão.
+            {isEn
+              ? 'Flavored mineral waters, fresh juices, botanical iced teas or soft drinks.'
+              : 'Águas minerais aromatizadas, sucos naturais, chás gelados botânicos ou refrigerantes.'}
           </div>
         </div>
 
         {/* RESTRIÇÕES / OBSERVAÇÕES */}
         <div className="space-y-1">
-          <label className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider">
-            Observações ou Restrições Especiais (Opcional)
+          <label className="text-[11px] font-medium text-neutral-300 uppercase tracking-wider">
+            {isEn
+              ? 'Special Notes or Dietary Restrictions (Optional)'
+              : 'Observações ou Restrições Especiais (Opcional)'}
           </label>
           <input
             type="text"
             value={kitchenNotes}
             onChange={(e) => setKitchenNotes(e.target.value)}
-            placeholder="Ex: Ponto da carne ao ponto para mal, sem nozes..."
-            className="w-full px-3.5 py-2 bg-black/40 border border-white/[0.1] rounded-xl text-xs text-white placeholder-neutral-500 outline-none focus:border-[#d3a809] transition-all"
+            placeholder={
+              isEn
+                ? 'e.g. Meat temperature medium rare, severe nut allergy...'
+                : 'Ex: Ponto da carne ao ponto para mal, sem nozes...'
+            }
+            className="w-full px-3.5 py-2.5 bg-black/40 border border-white/[0.1] rounded-xl text-xs text-white placeholder-neutral-500 outline-none focus:border-[#d3a809] transition-all"
           />
         </div>
 
@@ -407,14 +496,14 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
         )}
 
         {/* SUBMIT BUTTON */}
-        <div className="pt-2">
+        <div className="pt-1">
           <button
             type="button"
             onClick={handleSubmitOrder}
             disabled={submitting}
-            className="w-full disabled:opacity-60 disabled:cursor-wait py-3.5 bg-gradient-to-r from-[#d3a809] via-[#e5bc2c] to-[#b38b00] text-neutral-950 text-xs font-bold tracking-wider uppercase rounded-xl hover:from-[#e3b819] hover:to-[#c49800] transition-all shadow-lg active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full disabled:opacity-60 disabled:cursor-wait py-3.5 bg-[#d3a809] hover:bg-[#b89100] text-neutral-950 text-xs font-bold tracking-wider uppercase rounded-xl transition-all shadow-lg active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
           >
-            <span>{submitting ? 'Enviando…' : 'Emitir Minha Comanda'}</span>
+            <span>{submitting ? (isEn ? 'Submitting…' : 'Enviando…') : (isEn ? 'Issue My Ticket' : 'Emitir Minha Comanda')}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
@@ -422,7 +511,7 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
 
       {/* MINIMAL FOOTER */}
       <footer className="text-center text-[11px] text-neutral-400 py-6 border-t border-white/[0.06] mt-8">
-        <span>BH Raja Hotel · GarçON</span>
+        <span>{eventConfig.hotelName} · GarçON</span>
       </footer>
     </div>
   );

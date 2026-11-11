@@ -4,150 +4,161 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { SlidersHorizontal } from 'lucide-react';
-import { ActiveTab, EventConfig, GuestOrder, MenuItem } from './types';
-import {
-  MASTER_MENU_DATABASE,
-  INITIAL_EVENT_CONFIG,
-  HOTEL_INFO,
-} from './data/menuDatabase';
+import { ActiveTab, EventConfig, GuestOrder, MenuItem, StaffUser, AuditLogEntry } from './types';
+import { HOTEL_INFO } from './data/menuDatabase';
 import { Navbar } from './components/Navbar';
 import { ComandaGuestView } from './components/ComandaGuestView';
 import { AdminKitchenView } from './components/AdminKitchenView';
 import { EventConfigView } from './components/EventConfigView';
 import { MasterDatabaseView } from './components/MasterDatabaseView';
+import { AuditLogView } from './components/AuditLogView';
 import { ReceiptModal } from './components/ReceiptModal';
 import { MaitreGateModal } from './components/MaitreGateModal';
-import { isSupabaseConfigured } from './lib/supabase';
 import {
   staffSignIn,
   staffSignOut,
-  hasStaffSession,
-  fetchPublicEvent,
-  submitOrder,
-  loadStaffState,
-  saveState,
-  fetchOrders,
+  getStaffSession,
+  loadEvents,
+  saveEvents,
+  getActiveEventId,
+  setActiveEventId,
+  loadMasterDatabase,
+  saveMasterDatabase,
+  loadOrders,
+  saveOrders,
   insertOrder,
+  deleteOrder,
+  loadAuditLogs,
+  addAuditLog,
+  submitOrder,
+  syncFromSupabase,
 } from './lib/api';
+import { isSupabaseConfigured } from './lib/supabase';
 
-type BootState = 'loading' | 'ready' | 'no_event' | 'error' | 'not_configured';
-
-const STAFF_TABS: ActiveTab[] = ['admin', 'event_config', 'database'];
+const STAFF_TABS: ActiveTab[] = ['admin', 'event_config', 'database', 'audit_log'];
 const isStaffTab = (t: string): t is ActiveTab => STAFF_TABS.includes(t as ActiveTab);
 
 export default function App() {
   // Navigation: defaults to isolated guest comanda
   const [activeTab, setActiveTab] = useState<ActiveTab>('comanda');
-  const [bootState, setBootState] = useState<BootState>('loading');
 
-  // Staff (Maître) access: true only after the password was accepted by Supabase
+  // Staff (Maître) access: true only after authentication
   const [staffUnlocked, setStaffUnlocked] = useState(false);
-  // Tab the Maître wants to open; while not null the password modal is shown
+  const [currentStaffUser, setCurrentStaffUser] = useState<StaffUser | null>(null);
+
+  // Modal gate target: while not null the password modal is shown
   const [gateTarget, setGateTarget] = useState<ActiveTab | null>(null);
 
-  // Master Database (Permanent canonical catalog) — only loaded for staff
+  // Multi-Event State: Up to 4 simultaneous events
+  const [events, setEvents] = useState<EventConfig[]>([]);
+  const [currentEventId, setCurrentEventId] = useState<string>('');
+
+  // Master Database (Permanent canonical catalog)
   const [masterDatabase, setMasterDatabase] = useState<MenuItem[]>([]);
 
-  // Active Event Configuration. Guests receive it WITHOUT the access code.
-  const [eventConfig, setEventConfig] = useState<EventConfig | null>(null);
-
-  // Orders list — only loaded for staff
+  // Orders list (Consolidated for all events)
   const [orders, setOrders] = useState<GuestOrder[]>([]);
 
-  // Modal order view
+  // Audit Logs
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+
+  // Modal order view for receipt inspection
   const [modalOrder, setModalOrder] = useState<GuestOrder | null>(null);
 
-  const [syncError, setSyncError] = useState('');
+  // Detect direct event link for guests (e.g. ?event=eve1 or #/eve1 or #/evt-raja-1)
+  const resolveTargetEvent = (eventList: EventConfig[]): string => {
+    // 1. Check query parameter: ?event=eve1 or ?e=eve1
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramEvt = urlParams.get('event') || urlParams.get('e');
+    if (paramEvt) {
+      const found = eventList.find(
+        (e) => e.id === paramEvt || e.slug === paramEvt || e.id.endsWith(paramEvt)
+      );
+      if (found) return found.id;
+    }
 
-  const reportSyncError = useCallback(() => {
-    setSyncError('Não foi possível salvar no servidor. Verifique a conexão e tente de novo.');
-    setTimeout(() => setSyncError(''), 6000);
-  }, []);
+    // 2. Check hash route: #/eve1 or #/event/eve1 or #eve1
+    const rawHash = window.location.hash.replace(/^#\/?/, '').replace(/^event\//, '');
+    if (rawHash && !isStaffTab(rawHash) && rawHash !== 'comanda') {
+      const found = eventList.find(
+        (e) => e.id === rawHash || e.slug === rawHash || e.id.endsWith(rawHash)
+      );
+      if (found) return found.id;
+    }
 
-  // Loads everything staff needs (seeds defaults on the very first access)
-  const enterStaff = useCallback(async (tab: ActiveTab) => {
-    const state = await loadStaffState();
-    const master = state.masterDatabase ?? MASTER_MENU_DATABASE;
-    const config = state.eventConfig ?? INITIAL_EVENT_CONFIG;
-    if (!state.masterDatabase) await saveState('master_database', master);
-    if (!state.eventConfig) await saveState('event_config', config);
-    const currentOrders = await fetchOrders();
+    // 3. Check pathname: /eve1 or /evt-raja-1
+    const pathPart = window.location.pathname.replace(/^\//, '').split('/')[0];
+    if (pathPart) {
+      const found = eventList.find(
+        (e) => e.id === pathPart || e.slug === pathPart
+      );
+      if (found) return found.id;
+    }
 
-    setMasterDatabase(master);
-    setEventConfig(config);
-    setOrders(currentOrders);
-    setStaffUnlocked(true);
-    setBootState('ready');
-    setActiveTab(tab);
-    window.location.hash = tab;
-  }, []);
+    // Fallback to stored active event or first event
+    const stored = getActiveEventId();
+    return eventList.find((e) => e.id === stored)?.id || eventList[0]?.id || 'evt-raja-1';
+  };
 
-  // Leaves the Maître side: signs out and wipes staff data from memory
-  const lockStaff = useCallback(() => {
-    void staffSignOut();
-    setStaffUnlocked(false);
-    setOrders([]);
-    setMasterDatabase([]);
-    setModalOrder(null);
-    setEventConfig((prev) => (prev ? { ...prev, accessCode: '' } : prev));
-  }, []);
-
-  // Boot: guests get the public event; a reload inside the staff area keeps
-  // the session for the current tab only (sessionStorage).
+  // Initialize data on boot
   useEffect(() => {
-    let cancelled = false;
+    const loadedEvents = loadEvents();
+    const resolvedEventId = resolveTargetEvent(loadedEvents);
+    const loadedMaster = loadMasterDatabase();
+    const loadedOrders = loadOrders();
+    const loadedLogs = loadAuditLogs();
 
-    (async () => {
-      if (!isSupabaseConfigured) {
-        setBootState('not_configured');
-        return;
+    setEvents(loadedEvents);
+    setCurrentEventId(resolvedEventId);
+    setMasterDatabase(loadedMaster);
+    setOrders(loadedOrders);
+    setAuditLogs(loadedLogs);
+
+    // Sync with Supabase if online/configured
+    syncFromSupabase().then((synced) => {
+      if (synced) {
+        setEvents(loadEvents());
+        setOrders(loadOrders());
+        setMasterDatabase(loadMasterDatabase());
+        setAuditLogs(loadAuditLogs());
       }
+    });
 
-      const hash = window.location.hash.replace('#', '');
-      const wantsStaff = isStaffTab(hash);
+    // Check existing staff session
+    const existingStaff = getStaffSession();
+    if (existingStaff) {
+      setStaffUnlocked(true);
+      setCurrentStaffUser(existingStaff);
+    }
 
-      try {
-        const session = await hasStaffSession();
-
-        if (session && wantsStaff) {
-          await enterStaff(hash as ActiveTab);
-          return;
-        }
-        if (session) await staffSignOut();
-
-        const publicEvent = await fetchPublicEvent();
-        if (cancelled) return;
-        setEventConfig(publicEvent);
-        setBootState(publicEvent ? 'ready' : 'no_event');
-        if (wantsStaff) setGateTarget(hash as ActiveTab);
-      } catch {
-        if (!cancelled) setBootState('error');
+    // Hash navigation for staff
+    const hash = window.location.hash.replace('#', '');
+    if (isStaffTab(hash)) {
+      if (existingStaff) {
+        setActiveTab(hash as ActiveTab);
+      } else {
+        setGateTarget(hash as ActiveTab);
       }
-    })();
+    }
+  }, []);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [enterStaff]);
-
-  // Near-real-time kitchen map: refresh orders every few seconds
-  useEffect(() => {
-    if (!staffUnlocked || activeTab !== 'admin') return;
-    const timer = setInterval(() => {
-      fetchOrders()
-        .then(setOrders)
-        .catch(() => {
-          /* tenta de novo no próximo ciclo */
-        });
-    }, 8000);
-    return () => clearInterval(timer);
-  }, [staffUnlocked, activeTab]);
+  // Sync active event ID
+  const handleSelectEvent = useCallback((eventId: string) => {
+    setCurrentEventId(eventId);
+    setActiveEventId(eventId);
+    if (currentStaffUser) {
+      const selected = events.find((e) => e.id === eventId);
+      addAuditLog(
+        currentStaffUser,
+        'TROCA_EVENTO_FOCO',
+        `Maître selecionou o evento "${selected?.title || eventId}" (${selected?.location}).`
+      );
+      setAuditLogs(loadAuditLogs());
+    }
+  }, [events, currentStaffUser]);
 
   const handleSwitchTab = (tab: ActiveTab) => {
     if (tab === 'comanda') {
-      // Going back to the guest side locks the Maître area again
-      if (staffUnlocked) lockStaff();
       setActiveTab('comanda');
       window.location.hash = 'comanda';
       return;
@@ -159,35 +170,24 @@ export default function App() {
       return;
     }
 
-    // Not unlocked: ask for the Maître password first
+    // Always require password modal when entering Maître area
     setGateTarget(tab);
   };
 
-  const handleGateSubmit = async (password: string): Promise<string | null> => {
-    if (!gateTarget) return null;
-
-    const result = await staffSignIn(password);
+  const handleGateSubmit = async (user: StaffUser, password: string): Promise<string | null> => {
+    const result = await staffSignIn(user, password);
     if (!result.ok) {
-      switch (result.error) {
-        case 'bad_password':
-          return 'Senha incorreta.';
-        case 'rate_limited':
-          return 'Muitas tentativas. Aguarde um minuto e tente de novo.';
-        case 'not_configured':
-          return 'Acesso da equipe não configurado (faltam as variáveis do Supabase).';
-        default:
-          return 'Não foi possível verificar a senha. Confira a conexão.';
-      }
+      return 'Senha incorreta para o usuário selecionado.';
     }
 
-    try {
-      await enterStaff(gateTarget);
-      setGateTarget(null);
-      return null;
-    } catch {
-      await staffSignOut();
-      return 'Senha correta, mas não foi possível carregar os dados. Tente de novo.';
-    }
+    setStaffUnlocked(true);
+    setCurrentStaffUser(user);
+    const target = gateTarget || 'admin';
+    setActiveTab(target);
+    window.location.hash = target;
+    setGateTarget(null);
+    setAuditLogs(loadAuditLogs());
+    return null;
   };
 
   const handleGateClose = () => {
@@ -197,29 +197,98 @@ export default function App() {
     }
   };
 
-  const handleSubmitGuestOrder = (order: GuestOrder, code: string) =>
-    submitOrder(order, code);
+  const handleSignOut = async () => {
+    await staffSignOut();
+    setStaffUnlocked(false);
+    setCurrentStaffUser(null);
+    setActiveTab('comanda');
+    window.location.hash = 'comanda';
+    setAuditLogs(loadAuditLogs());
+  };
 
+  // Submit Order from Guest
+  const handleSubmitGuestOrder = async (order: GuestOrder, code: string) => {
+    const result = await submitOrder(order, code);
+    if (result.ok) {
+      const updated = loadOrders();
+      setOrders(updated);
+      addAuditLog('CONVIDADO', 'COMANDA_EMITIDA', `Comanda ${order.code} emitida por "${order.guestName}" no evento "${order.eventTitle}".`);
+      setAuditLogs(loadAuditLogs());
+    }
+    return result;
+  };
+
+  // Add Simulated Order from Maître
   const handleAddSimulatedOrder = (simulatedOrder: GuestOrder) => {
-    setOrders((prev) => [simulatedOrder, ...prev]);
-    insertOrder(simulatedOrder).catch(reportSyncError);
+    insertOrder(simulatedOrder);
+    setOrders(loadOrders());
+    if (currentStaffUser) {
+      addAuditLog(currentStaffUser, 'SIMULAÇÃO_PEDIDO', `Comanda teste ${simulatedOrder.code} gerada para "${simulatedOrder.guestName}".`);
+      setAuditLogs(loadAuditLogs());
+    }
   };
 
-  const handleUpdateEventConfig = (newConfig: EventConfig) => {
-    setEventConfig(newConfig);
-    saveState('event_config', newConfig).catch(reportSyncError);
+  // Delete Order (Maître capability)
+  const handleDeleteOrder = (orderId: string) => {
+    const author = currentStaffUser || 'MAÎTRE';
+    deleteOrder(orderId, author);
+    setOrders(loadOrders());
+    setAuditLogs(loadAuditLogs());
   };
 
-  const handleUpdateMasterDatabase = (updated: MenuItem[]) => {
-    setMasterDatabase(updated);
-    saveState('master_database', updated).catch(reportSyncError);
+  // Update Event Config
+  const handleUpdateEventConfig = (updatedConfig: EventConfig) => {
+    const updatedEvents = events.map((e) => (e.id === updatedConfig.id ? updatedConfig : e));
+    setEvents(updatedEvents);
+    saveEvents(updatedEvents, currentStaffUser || 'MAÎTRE');
+    if (currentStaffUser) {
+      addAuditLog(
+        currentStaffUser,
+        'ATUALIZAÇÃO_EVENTO',
+        `Evento "${updatedConfig.title}" alterado: Local ${updatedConfig.location}, ${updatedConfig.totalReservations} reservas.`
+      );
+      setAuditLogs(loadAuditLogs());
+    }
   };
 
+  // Add New Event Slot (up to 4 events)
+  const handleAddNewEvent = (newEvent: EventConfig) => {
+    if (events.length >= 4) return;
+    const updated = [...events, newEvent];
+    setEvents(updated);
+    saveEvents(updated, currentStaffUser || 'MAÎTRE');
+    if (currentStaffUser) {
+      addAuditLog(
+        currentStaffUser,
+        'CRIAÇÃO_EVENTO',
+        `Novo evento criado: "${newEvent.title}" no espaço ${newEvent.location}.`
+      );
+      setAuditLogs(loadAuditLogs());
+    }
+  };
+
+  // Update Master Database
+  const handleUpdateMasterDatabase = (updatedDB: MenuItem[]) => {
+    setMasterDatabase(updatedDB);
+    saveMasterDatabase(updatedDB);
+    if (currentStaffUser) {
+      addAuditLog(
+        currentStaffUser,
+        'ATUALIZAÇÃO_ACERVO',
+        `Acervo Mestre atualizado com ${updatedDB.length} pratos/sobremesas.`
+      );
+      setAuditLogs(loadAuditLogs());
+    }
+  };
+
+  // Reset active event to master database
   const handleResetToDefault = () => {
-    if (!eventConfig) return;
-    if (window.confirm('Restaurar as opções do evento com as receitas do Acervo Mestre?')) {
+    const active = events.find((e) => e.id === currentEventId) || events[0];
+    if (!active) return;
+
+    if (window.confirm('Restaurar as opções deste evento com as receitas do Acervo Mestre?')) {
       const resetConfig: EventConfig = {
-        ...INITIAL_EVENT_CONFIG,
+        ...active,
         activeDishes: masterDatabase.filter((m) => m.category === 'main').slice(0, 4),
         activeDesserts: masterDatabase.filter((m) => m.category === 'dessert').slice(0, 3),
       };
@@ -228,60 +297,21 @@ export default function App() {
   };
 
   const isGuestMode = activeTab === 'comanda';
-
-  // Shown to guests while the event is loading or unavailable
-  const guestPlaceholder = (message: string) => (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-6 px-6 text-center">
-      <span className="text-lg font-bold tracking-widest text-[#d3a809] uppercase font-display">
-        Garç<span className="text-white">ON</span>
-      </span>
-      <p className="text-sm text-neutral-300 max-w-sm">{message}</p>
-      {bootState !== 'loading' && bootState !== 'not_configured' && (
-        <button
-          onClick={() => handleSwitchTab('admin')}
-          className="text-[11px] text-neutral-400 hover:text-[#d3a809] flex items-center gap-1.5 transition-colors px-2 py-1 rounded hover:bg-white/[0.05] cursor-pointer"
-          title="Acesso da Equipe do Hotel"
-        >
-          <SlidersHorizontal className="w-3.5 h-3.5" />
-          <span>Maître</span>
-        </button>
-      )}
-    </div>
-  );
-
-  const renderGuest = () => {
-    if (bootState === 'loading') return guestPlaceholder('Carregando…');
-    if (bootState === 'not_configured') {
-      return guestPlaceholder(
-        'Configuração pendente: defina as variáveis do Supabase (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY e VITE_STAFF_EMAIL).'
-      );
-    }
-    if (bootState === 'error') {
-      return guestPlaceholder('Não foi possível carregar o evento. Verifique a conexão e recarregue a página.');
-    }
-    if (!eventConfig) {
-      return guestPlaceholder('Nenhum evento disponível no momento.');
-    }
-    return (
-      <ComandaGuestView
-        eventConfig={eventConfig}
-        onSubmitOrder={handleSubmitGuestOrder}
-        onOpenAdmin={() => handleSwitchTab('admin')}
-      />
-    );
-  };
+  const activeEvent = events.find((e) => e.id === currentEventId) || events[0] || null;
 
   return (
     <div className="min-h-screen bg-[#00001f] text-neutral-100 flex flex-col relative selection:bg-[#d3a809] selection:text-neutral-950 font-sans">
-      {/* Background ambient luxury lighting with exact hotel midnight navy */}
-      <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(211,168,9,0.12),rgba(0,0,31,0)_80%)]" />
+      {/* Background ambient luxury lighting with hotel midnight navy & gold warmth */}
+      <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(211,168,9,0.12),rgba(0,0,31,0)_80%)] no-print" />
 
-      {/* TOP HEADER: ONLY SHOWN FOR STAFF / ADMIN PAGES (COMPLETELY REMOVED FOR GUEST COMANDA) */}
+      {/* TOP HEADER: ONLY SHOWN FOR STAFF / ADMIN PAGES */}
       {!isGuestMode && staffUnlocked && (
         <Navbar
           activeTab={activeTab}
           setActiveTab={handleSwitchTab}
           ordersCount={orders.length}
+          currentUser={currentStaffUser}
+          onSignOut={handleSignOut}
           onOpenGuestComanda={() => handleSwitchTab('comanda')}
         />
       )}
@@ -289,18 +319,30 @@ export default function App() {
       {/* MAIN VIEW */}
       <main className="relative z-10 flex-1">
         {isGuestMode ? (
-          // ISOLATED GUEST ENVIRONMENT (NO HEADER, REDUCED FOOTER, MINIMAL GLASSMORPHIC)
-          renderGuest()
+          activeEvent ? (
+            /* CLIENT NEVER CHOOSES EVENT - OPENS DIRECTLY FOR THEIR QR/LINK EVENT */
+            <ComandaGuestView
+              eventConfig={activeEvent}
+              onSubmitOrder={handleSubmitGuestOrder}
+              onOpenAdmin={() => handleSwitchTab('admin')}
+            />
+          ) : (
+            <div className="min-h-screen flex items-center justify-center text-xs text-neutral-400">
+              Carregando evento...
+            </div>
+          )
         ) : (
-          // STAFF / LOGISTICS ENVIRONMENT (only after the Maître password)
           staffUnlocked &&
-          eventConfig && (
+          activeEvent && (
             <>
               {activeTab === 'admin' && (
                 <AdminKitchenView
+                  events={events}
+                  currentEventId={currentEventId}
+                  onSelectEvent={handleSelectEvent}
                   orders={orders}
-                  eventConfig={eventConfig}
                   onAddSimulatedOrder={handleAddSimulatedOrder}
+                  onDeleteOrder={handleDeleteOrder}
                   onViewReceipt={(order) => setModalOrder(order)}
                   onOpenGuestComanda={() => handleSwitchTab('comanda')}
                 />
@@ -308,8 +350,11 @@ export default function App() {
 
               {activeTab === 'event_config' && (
                 <EventConfigView
-                  eventConfig={eventConfig}
+                  events={events}
+                  currentEventId={currentEventId}
+                  onSelectEvent={handleSelectEvent}
                   onUpdateEventConfig={handleUpdateEventConfig}
+                  onAddNewEvent={handleAddNewEvent}
                   masterDatabase={masterDatabase}
                   onResetToDefault={handleResetToDefault}
                   onOpenGuestComanda={() => handleSwitchTab('comanda')}
@@ -323,50 +368,53 @@ export default function App() {
                   onOpenGuestComanda={() => handleSwitchTab('comanda')}
                 />
               )}
+
+              {activeTab === 'audit_log' && (
+                <AuditLogView
+                  logs={auditLogs}
+                  onOpenGuestComanda={() => handleSwitchTab('comanda')}
+                />
+              )}
             </>
           )
         )}
       </main>
 
       {/* MODAL RECEIPT (FOR STAFF INSPECTION) */}
-      {staffUnlocked && eventConfig && (
+      {staffUnlocked && activeEvent && (
         <ReceiptModal
           order={modalOrder}
-          eventConfig={eventConfig}
+          eventConfig={activeEvent}
           onClose={() => setModalOrder(null)}
         />
       )}
 
-      {/* MAÎTRE PASSWORD */}
+      {/* MAÎTRE AUTHENTICATION MODAL (FSOUZA, LAUGUSTO, GILSON) */}
       <MaitreGateModal
         open={gateTarget !== null}
         onClose={handleGateClose}
         onSubmit={handleGateSubmit}
       />
 
-      {/* SAVE ERROR TOAST */}
-      {syncError && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] max-w-sm w-[90%] text-xs text-rose-200 bg-rose-950/90 border border-rose-500/30 rounded-xl px-4 py-3 shadow-lg no-print">
-          {syncError}
-        </div>
-      )}
-
       {/* FOOTER: ONLY SHOWN ON ADMIN VIEWS (GUEST HAS ITS OWN MINIMAL FOOTER) */}
       {!isGuestMode && staffUnlocked && (
-        <footer className="relative z-10 border-t border-white/[0.08] bg-[#00001f] py-5 px-6 text-xs text-neutral-400 no-print">
-          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+        <footer className="relative z-10 border-t border-white/[0.08] bg-[#00001f] py-4 px-6 text-xs text-neutral-400 no-print">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <span className="font-bold tracking-wider text-[#d3a809] text-sm font-display">
                 {HOTEL_INFO.name}
               </span>
               <span className="text-neutral-600">·</span>
               <span>GarçON Gestão Gastronômica</span>
+              {isSupabaseConfigured() && (
+                <span className="text-[10px] bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 px-1.5 py-0.2 rounded font-mono ml-1.5">
+                  Supabase DB Conectado
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-4 text-[11px] text-neutral-400">
               <span>{HOTEL_INFO.address}</span>
-              <span className="text-neutral-600 hidden md:inline">·</span>
-              <span className="hidden md:inline">CNPJ: {HOTEL_INFO.cnpj}</span>
             </div>
           </div>
         </footer>

@@ -1,21 +1,64 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+// Prioritize environment variables, then localStorage configured credentials
+const envUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const envAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
-export const STAFF_EMAIL = (import.meta.env.VITE_STAFF_EMAIL as string | undefined) ?? '';
+function getStoredUrl(): string | undefined {
+  try {
+    return envUrl || localStorage.getItem('garcon_supabase_url') || undefined;
+  } catch {
+    return envUrl;
+  }
+}
 
-export const isSupabaseConfigured = Boolean(url && anonKey && STAFF_EMAIL);
+function getStoredKey(): string | undefined {
+  try {
+    return envAnonKey || localStorage.getItem('garcon_supabase_anon_key') || undefined;
+  } catch {
+    return envAnonKey;
+  }
+}
 
-// A sessão do Maître fica no sessionStorage: some ao fechar a aba
-// (importante em tablets/computadores compartilhados do salão).
-export const supabase = isSupabaseConfigured
-  ? createClient(url as string, anonKey as string, {
+let cachedClient: SupabaseClient | null = null;
+
+export function getSupabaseClient(): SupabaseClient | null {
+  const url = getStoredUrl();
+  const anonKey = getStoredKey();
+
+  if (!url || !anonKey) return null;
+
+  if (cachedClient) return cachedClient;
+
+  try {
+    cachedClient = createClient(url, anonKey, {
       auth: {
         storage: window.sessionStorage,
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: false,
       },
-    })
-  : null;
+    });
+    return cachedClient;
+  } catch (err) {
+    console.error('Falha ao inicializar Supabase:', err);
+    return null;
+  }
+}
+
+export function isSupabaseConfigured(): boolean {
+  return Boolean(getStoredUrl() && getStoredKey());
+}
+
+export function updateSupabaseConfig(url: string, anonKey: string): void {
+  try {
+    localStorage.setItem('garcon_supabase_url', url.trim());
+    localStorage.setItem('garcon_supabase_anon_key', anonKey.trim());
+    cachedClient = null; // Re-create client
+  } catch (e) {
+    console.error('Erro ao salvar credenciais Supabase:', e);
+  }
+}
+
+// Export default instance for quick access
+export const supabase = getSupabaseClient();
