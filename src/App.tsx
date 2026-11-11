@@ -14,7 +14,6 @@ import { MasterDatabaseView } from './components/MasterDatabaseView';
 import { AuditLogView } from './components/AuditLogView';
 import { ReceiptModal } from './components/ReceiptModal';
 import { MaitreGateModal } from './components/MaitreGateModal';
-import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import {
   staffSignIn,
   staffSignOut,
@@ -39,7 +38,6 @@ import {
   submitOrder,
   syncFromSupabase,
 } from './lib/api';
-import { isSupabaseConfigured } from './lib/supabase';
 
 const STAFF_TABS: ActiveTab[] = ['admin', 'event_config', 'database', 'audit_log'];
 const isStaffTab = (t: string): t is ActiveTab => STAFF_TABS.includes(t as ActiveTab);
@@ -54,9 +52,6 @@ export default function App() {
 
   // Modal gate target: while not null the password modal is shown
   const [gateTarget, setGateTarget] = useState<ActiveTab | null>(null);
-
-  // Supabase management modal
-  const [showSupabaseModal, setShowSupabaseModal] = useState(false);
 
   // Event Library & Caixa Slots State
   const [eventLibrary, setEventLibrary] = useState<EventConfig[]>([]);
@@ -393,7 +388,6 @@ export default function App() {
           currentUser={currentStaffUser}
           onSignOut={handleSignOut}
           onOpenGuestComanda={() => handleSwitchTab('comanda')}
-          onOpenSupabaseConfig={() => setShowSupabaseModal(true)}
         />
       )}
 
@@ -481,13 +475,6 @@ export default function App() {
         onSubmit={handleGateSubmit}
       />
 
-      {/* SUPABASE CONNECTION & SYNC MODAL */}
-      <SupabaseSyncModal
-        open={showSupabaseModal}
-        onClose={() => setShowSupabaseModal(false)}
-        onSynced={handleSupabaseSynced}
-      />
-
       {/* FOOTER: ONLY SHOWN ON ADMIN VIEWS */}
       {!isGuestMode && staffUnlocked && (
         <footer className="relative z-10 border-t border-white/[0.08] bg-[#00001f] py-4 px-6 text-xs text-neutral-400 no-print">
@@ -498,17 +485,6 @@ export default function App() {
               </span>
               <span className="text-neutral-600">·</span>
               <span>GarçON Gestão Gastronômica</span>
-              <button
-                type="button"
-                onClick={() => setShowSupabaseModal(true)}
-                className={`text-[10px] px-2 py-0.5 rounded font-mono ml-1.5 border cursor-pointer ${
-                  isSupabaseConfigured()
-                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                    : 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                }`}
-              >
-                {isSupabaseConfigured() ? 'Supabase Conectado' : 'Supabase Local'}
-              </button>
             </div>
 
             <div className="flex items-center gap-4 text-[11px] text-neutral-400">

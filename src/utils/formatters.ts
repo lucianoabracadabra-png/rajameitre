@@ -208,3 +208,133 @@ export function formatBrazilianPhone(input: string): string {
 
   return digits;
 }
+
+/**
+ * Retorna a diferença em dias entre a data do evento e hoje.
+ * - Positivo: faltam X dias
+ * - 0: hoje
+ * - Negativo: passou X dias
+ */
+export function getEventDayDifference(dateStr: string): number {
+  if (!dateStr) return 0;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let targetDate = new Date();
+  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    targetDate = new Date(parseInt(isoMatch[1], 10), parseInt(isoMatch[2], 10) - 1, parseInt(isoMatch[3], 10));
+  } else {
+    targetDate = new Date(dateStr);
+  }
+  targetDate.setHours(0, 0, 0, 0);
+
+  const diffTime = targetDate.getTime() - today.getTime();
+  return Math.round(diffTime / (1000 * 60 * 60 * 24));
+}
+
+export function formatEventCountdown(dateStr: string): {
+  label: string;
+  diffDays: number;
+  isPast: boolean;
+  isExpiredOver7Days: boolean;
+  badgeStyle: 'today' | 'upcoming' | 'past' | 'expired';
+} {
+  const diffDays = getEventDayDifference(dateStr);
+
+  if (diffDays === 0) {
+    return {
+      label: 'É hoje',
+      diffDays: 0,
+      isPast: false,
+      isExpiredOver7Days: false,
+      badgeStyle: 'today',
+    };
+  }
+
+  if (diffDays === 1) {
+    return {
+      label: 'Amanhã',
+      diffDays: 1,
+      isPast: false,
+      isExpiredOver7Days: false,
+      badgeStyle: 'upcoming',
+    };
+  }
+
+  if (diffDays > 1) {
+    return {
+      label: `Faltam ${diffDays} dias`,
+      diffDays,
+      isPast: false,
+      isExpiredOver7Days: false,
+      badgeStyle: 'upcoming',
+    };
+  }
+
+  const pastDays = Math.abs(diffDays);
+  const isExpiredOver7Days = pastDays > 7;
+
+  return {
+    label: pastDays === 1 ? 'Ontem' : `Realizado há ${pastDays} dias`,
+    diffDays,
+    isPast: true,
+    isExpiredOver7Days,
+    badgeStyle: isExpiredOver7Days ? 'expired' : 'past',
+  };
+}
+
+/**
+ * Classifica a data do evento em: 'previous_week' | 'current_week' | 'next_week' | 'other'
+ */
+export function getEventWeekBucket(dateStr: string): 'previous_week' | 'current_week' | 'next_week' | 'other' {
+  if (!dateStr) return 'other';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const dayOfWeek = today.getDay();
+  const startCurrentWeek = new Date(today);
+  startCurrentWeek.setDate(today.getDate() - dayOfWeek);
+  startCurrentWeek.setHours(0, 0, 0, 0);
+
+  const endCurrentWeek = new Date(startCurrentWeek);
+  endCurrentWeek.setDate(startCurrentWeek.getDate() + 6);
+  endCurrentWeek.setHours(23, 59, 59, 999);
+
+  const startPrevWeek = new Date(startCurrentWeek);
+  startPrevWeek.setDate(startCurrentWeek.getDate() - 7);
+
+  const endPrevWeek = new Date(startCurrentWeek);
+  endPrevWeek.setDate(startCurrentWeek.getDate() - 1);
+  endPrevWeek.setHours(23, 59, 59, 999);
+
+  const startNextWeek = new Date(endCurrentWeek);
+  startNextWeek.setDate(endCurrentWeek.getDate() + 1);
+  startNextWeek.setHours(0, 0, 0, 0);
+
+  const endNextWeek = new Date(startNextWeek);
+  endNextWeek.setDate(startNextWeek.getDate() + 6);
+  endNextWeek.setHours(23, 59, 59, 999);
+
+  let targetDate = new Date();
+  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    targetDate = new Date(parseInt(isoMatch[1], 10), parseInt(isoMatch[2], 10) - 1, parseInt(isoMatch[3], 10));
+  } else {
+    targetDate = new Date(dateStr);
+  }
+  targetDate.setHours(12, 0, 0, 0);
+
+  const time = targetDate.getTime();
+  if (time >= startCurrentWeek.getTime() && time <= endCurrentWeek.getTime()) {
+    return 'current_week';
+  }
+  if (time >= startPrevWeek.getTime() && time <= endPrevWeek.getTime()) {
+    return 'previous_week';
+  }
+  if (time >= startNextWeek.getTime() && time <= endNextWeek.getTime()) {
+    return 'next_week';
+  }
+
+  return 'other';
+}

@@ -23,19 +23,19 @@ create table if not exists public.orders (
 create index if not exists orders_created_at_idx on public.orders (created_at desc);
 
 -- 2) SEGURANÇA (RLS) --------------------------------------------------
--- Com RLS ligado e SEM política para "anon", o público não lê nem grava
--- nada direto nas tabelas. Só o usuário da equipe (logado com a senha do
--- Maître) enxerga e edita.
+-- Permite operações de leitura e gravação para sincronização direta do painel
 alter table public.app_state enable row level security;
 alter table public.orders    enable row level security;
 
 drop policy if exists "equipe_app_state" on public.app_state;
-create policy "equipe_app_state" on public.app_state
-  for all to authenticated using (true) with check (true);
+drop policy if exists "anon_app_state" on public.app_state;
+create policy "anon_app_state" on public.app_state
+  for all to anon, authenticated using (true) with check (true);
 
 drop policy if exists "equipe_orders" on public.orders;
-create policy "equipe_orders" on public.orders
-  for all to authenticated using (true) with check (true);
+drop policy if exists "anon_orders" on public.orders;
+create policy "anon_orders" on public.orders
+  for all to anon, authenticated using (true) with check (true);
 
 -- 3) FUNÇÕES PARA O CONVIDADO ----------------------------------------
 -- O convidado (sem login) só consegue duas coisas, e só por aqui:

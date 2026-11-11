@@ -1,4 +1,4 @@
-import type { EventConfig, GuestOrder, MenuItem, AuditLogEntry, StaffUser } from '../types';
+import type { EventConfig, GuestOrder, MenuItem, AuditLogEntry, StaffUser, EventAnalyticsRecord } from '../types';
 import {
   MASTER_MENU_DATABASE,
   INITIAL_EVENTS,
@@ -6,7 +6,7 @@ import {
   INITIAL_AUDIT_LOGS,
 } from '../data/menuDatabase';
 import { getSupabaseClient } from './supabase';
-import { normalizePassword } from '../utils/formatters';
+import { normalizePassword, formatEventCountdown } from '../utils/formatters';
 
 /* ------------------------------ Maître & Equipe ------------------------------ */
 
@@ -153,17 +153,27 @@ export function saveCaixaSlots(slots: CaixaSlot[]): void {
 }
 
 /**
- * Retorna os eventos atualmente alocados nas Caixas #1, #2, #3, #4
+ * Retorna os eventos atualmente alocados nas Caixas #1, #2, #3, #4.
+ * Se o evento já passou há mais de 7 dias, é automaticamente removido da caixa.
  */
 export function loadEvents(): EventConfig[] {
   const library = loadEventLibrary();
   const slots = loadCaixaSlots();
+  let slotsUpdated = false;
 
   const allocatedEvents: EventConfig[] = [];
-  slots.forEach((slot) => {
+  slots.forEach((slot, idx) => {
     if (slot.eventId) {
       const found = library.find((e) => e.id === slot.eventId);
       if (found) {
+        // Se passou mais de 7 dias, remove da caixa automaticamente
+        const countdown = formatEventCountdown(found.date);
+        if (countdown.isExpiredOver7Days) {
+          slots[idx] = { ...slot, eventId: null };
+          slotsUpdated = true;
+          return;
+        }
+
         allocatedEvents.push({
           ...found,
           slug: slot.slug,
@@ -171,6 +181,10 @@ export function loadEvents(): EventConfig[] {
       }
     }
   });
+
+  if (slotsUpdated) {
+    saveCaixaSlots(slots);
+  }
 
   // Se nada foi alocado, fallback para o primeiro evento da biblioteca
   if (allocatedEvents.length === 0 && library.length > 0) {
@@ -514,12 +528,13 @@ export async function submitOrder(order: GuestOrder, inputCode: string): Promise
   return { ok: true };
 }
 
-/* ------------------------------ Tradução com IA & Fallback ------------------------------ */
+/* ------------------------------ Tradução com Google Translate & Gemini IA ------------------------------ */
 
 export async function translateTextWithAI(
   text: string,
   targetLang: 'en' | 'pt' = 'en',
-  context: 'dish' | 'event_description' = 'dish'
+  context: 'dish' | 'event_description' = 'dish',
+  engine: 'gemini' | 'google' = 'gemini'
 ): Promise<string> {
   if (!text || !text.trim()) return '';
 
@@ -527,7 +542,7 @@ export async function translateTextWithAI(
     const res = await fetch('/api/translate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text.trim(), targetLang, context }),
+      body: JSON.stringify({ text: text.trim(), targetLang, context, engine }),
     });
 
     if (res.ok) {
@@ -542,6 +557,104 @@ export async function translateTextWithAI(
 
   // Fallback culinário instantâneo no cliente
   return localGastronomicTranslate(text);
+}
+
+/* ----------------------- Inteligência & Histórico de Negócios ----------------------- */
+
+export function loadEventAnalyticsRecords(): EventAnalyticsRecord[] {
+  try {
+    const raw = localStorage.getItem('garcon_event_analytics');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.error('Erro ao ler analytics:', e);
+  }
+  return [];
+}
+
+export function saveEventAnalyticsRecord(record: EventAnalyticsRecord): void {
+  const current = loadEventAnalyticsRecords();
+  const filtered = current.filter((r) => r.id !== record.id);
+  const updated = [record, ...filtered].slice(0, 100);
+  localStorage.setItem('garcon_event_analytics', JSON.stringify(updated));
+
+  // Sync analytics to Supabase
+  const client = getSupabaseClient();
+  if (client) {
+    void client
+      .from('app_state')
+      .upsert({
+        key: 'event_analytics',
+        value: updated,
+        updated_at: new Date().toISOString(),
+      })
+      .then(
+        ({ error }: any) => {
+          if (error) console.warn('Supabase sync (event_analytics):', error.message);
+        },
+        (e: any) => console.warn('Supabase sync failed (event_analytics):', e)
+      );
+  }
+}
+
+export function recordEventBusinessSnapshot(
+  event: EventConfig,
+  orders: GuestOrder[],
+  maitreInCharge: StaffUser | string = 'MAÎTRE'
+): EventAnalyticsRecord {
+  const eventOrders = orders.filter((o) => o.eventId === event.id || o.eventTitle === event.title);
+
+  const dishCounts: Record<string, number> = {};
+  const dessertCounts: Record<string, number> = {};
+  let notesCount = 0;
+
+  eventOrders.forEach((order) => {
+    const main = order.mainDish.name;
+    dishCounts[main] = (dishCounts[main] || 0) + 1;
+
+    if (order.dessert) {
+      const dName = order.dessert.name;
+      dessertCounts[dName] = (dessertCounts[dName] || 0) + 1;
+    }
+
+    if (order.notes && order.notes.trim()) {
+      notesCount += 1;
+    }
+  });
+
+  const dishesBreakdown = Object.entries(dishCounts).map(([name, count]) => ({ name, count }));
+  const dessertsBreakdown = Object.entries(dessertCounts).map(([name, count]) => ({ name, count }));
+  const attendanceRate =
+    event.totalReservations > 0
+      ? Math.round((eventOrders.length / event.totalReservations) * 100)
+      : 100;
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('pt-BR');
+  const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+  const record: EventAnalyticsRecord = {
+    id: `analytics-${event.id}-${Date.now()}`,
+    eventId: event.id,
+    eventTitle: event.title,
+    eventDate: event.date,
+    location: event.location,
+    coordinatorName: event.coordinatorName,
+    coordinatorPhone: event.coordinatorPhone,
+    maitreInCharge,
+    totalReservations: event.totalReservations,
+    totalComandasIssued: eventOrders.length,
+    attendanceRate,
+    dishesBreakdown,
+    dessertsBreakdown,
+    specialNotesCount: notesCount,
+    recordedAt: `${dateStr} às ${timeStr}`,
+  };
+
+  saveEventAnalyticsRecord(record);
+  return record;
 }
 
 function localGastronomicTranslate(text: string): string {

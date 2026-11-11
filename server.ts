@@ -88,28 +88,50 @@ function fallbackTranslate(text: string): string {
   return result;
 }
 
-// Translation endpoint
+// Translation endpoint supporting Google Translate and Gemini IA
 app.post('/api/translate', async (req, res) => {
-  const { text, targetLang = 'en', context = 'dish' } = req.body;
+  const { text, targetLang = 'en', context = 'dish', engine = 'gemini' } = req.body;
 
   if (!text || typeof text !== 'string') {
     return res.status(400).json({ error: 'Texto não informado.' });
   }
 
-  // If Gemini API is configured, use it
+  // 1. If Google Translate is selected
+  if (engine === 'google') {
+    try {
+      const targetCode = targetLang === 'en' ? 'en' : 'pt';
+      const sourceCode = targetLang === 'en' ? 'pt' : 'en';
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceCode}&tl=${targetCode}&dt=t&q=${encodeURIComponent(text.trim())}`;
+      
+      const fetchRes = await fetch(url);
+      if (fetchRes.ok) {
+        const rawJson: any = await fetchRes.json();
+        if (Array.isArray(rawJson) && Array.isArray(rawJson[0])) {
+          const translatedChunks = rawJson[0].map((item: any) => item[0]).filter(Boolean).join('');
+          if (translatedChunks.trim()) {
+            return res.json({ translatedText: translatedChunks.trim(), source: 'google-translate' });
+          }
+        }
+      }
+    } catch (gErr: any) {
+      console.warn('Google Translate API error, falling back:', gErr?.message);
+    }
+  }
+
+  // 2. If Gemini IA is selected (or fallback)
   if (ai) {
     try {
       const targetLanguageName = targetLang === 'en' ? 'Inglês (English US)' : 'Português do Brasil (PT-BR)';
       const prompt = `Você é um tradutor executivo de alta gastronomia para o BH Raja Hotel.
-Traduza o seguinte texto gastronômico ou descritivo para ${targetLanguageName}.
-Contexto: ${context === 'dish' ? 'Descrição de prato refinado/ingredientes' : 'Descrição/boas-vindas de evento'}.
+Traduza o seguinte texto para ${targetLanguageName}.
+Contexto: ${context === 'dish' ? 'Descrição culinária de prato/ingredientes' : 'Descrição/boas-vindas de evento'}.
 IMPORTANTE:
 - NUNCA altere títulos ou nomes próprios de pessoas/empresas.
-- Preserve o tom de alta hospitalidade, luxo e precisão culinária.
+- Preserve precisão de ingredientes e tom de hospitalidade.
 - Devolva EXCLUSIVAMENTE a tradução final pura, sem aspas adicionais, sem preâmbulo, sem explicações.
 
 Texto:
-"${text}"`;
+"${text.trim()}"`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-3.8-flash',
@@ -117,7 +139,7 @@ Texto:
       });
 
       const translatedText = response.text ? response.text.trim() : fallbackTranslate(text);
-      return res.json({ translatedText, source: 'gemini' });
+      return res.json({ translatedText, source: 'gemini-flash' });
     } catch (error: any) {
       console.warn('Gemini API call failed, using gastronomic translation engine:', error?.message);
       const fallback = fallbackTranslate(text);

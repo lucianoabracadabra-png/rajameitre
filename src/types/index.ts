@@ -94,12 +94,31 @@ export interface GuestOrder {
   authCode: string;
 }
 
+export interface EventAnalyticsRecord {
+  id: string;
+  eventId: string;
+  eventTitle: string;
+  eventDate: string;
+  location: HotelVenue;
+  coordinatorName?: string;
+  coordinatorPhone?: string;
+  maitreInCharge: StaffUser | string;
+  totalReservations: number;
+  totalComandasIssued: number;
+  attendanceRate: number; // percentage
+  dishesBreakdown: { name: string; count: number }[];
+  dessertsBreakdown: { name: string; count: number }[];
+  specialNotesCount: number;
+  recordedAt: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   timestamp: string;
   author: string; // FSOUZA, LAUGUSTO, GILSON
   action: string;
   details: string;
+  analyticsSnapshot?: EventAnalyticsRecord;
 }
 
 export type StaffUser = 'FSOUZA' | 'LAUGUSTO' | 'GILSON';
