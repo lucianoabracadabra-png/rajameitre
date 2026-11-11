@@ -4,12 +4,13 @@ import {
   Database,
   Plus,
   Trash2,
-  ExternalLink,
   Sparkles,
   Check,
   Languages,
   Loader2,
   AlertCircle,
+  Tag,
+  X,
 } from 'lucide-react';
 import { DietaryIcons } from './DietaryIcons';
 import { translateTextWithAI } from '../lib/api';
@@ -23,7 +24,6 @@ interface MasterDatabaseViewProps {
 export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
   masterDatabase,
   onUpdateMasterDatabase,
-  onOpenGuestComanda,
 }) => {
   const [activeCategory, setActiveCategory] = useState<DishCategory | 'all'>('all');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -35,7 +35,13 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
   const [newDescriptionEn, setNewDescriptionEn] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>(['Sem glúten', 'Sem Lactose']);
   const [newHighlight, setNewHighlight] = useState('');
+  const [newHighlightEn, setNewHighlightEn] = useState('');
   const [translating, setTranslating] = useState(false);
+
+  // Quick edit state for Destaque
+  const [quickEditingHighlightId, setQuickEditingHighlightId] = useState<string | null>(null);
+  const [quickHighlightPt, setQuickHighlightPt] = useState('');
+  const [quickHighlightEn, setQuickHighlightEn] = useState('');
 
   const filteredItems = masterDatabase.filter((item) => {
     if (activeCategory === 'all') return true;
@@ -69,10 +75,11 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
       id: `master-${Date.now()}`,
       category: newCategory,
       name: newName.trim(), // Somente um único nome
-      description: newDescription.trim() || 'Criação autoral do Chef Executivo BH Raja Hotel.',
+      description: newDescription.trim() || 'Criação gastronômica BH Raja Hotel.',
       descriptionEn: newDescriptionEn.trim() || undefined,
       dietary: [...selectedTags],
       highlight: newHighlight.trim() || undefined,
+      highlightEn: newHighlightEn.trim() || undefined,
     };
 
     const updated = [...masterDatabase, newItem];
@@ -84,6 +91,7 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
     setNewDescriptionEn('');
     setSelectedTags(['Sem glúten', 'Sem Lactose']);
     setNewHighlight('');
+    setNewHighlightEn('');
     setShowAddModal(false);
   };
 
@@ -92,6 +100,28 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
       const updated = masterDatabase.filter((item) => item.id !== id);
       onUpdateMasterDatabase(updated);
     }
+  };
+
+  const handleStartQuickHighlight = (item: MenuItem) => {
+    setQuickEditingHighlightId(item.id);
+    setQuickHighlightPt(item.highlight || '');
+    setQuickHighlightEn(item.highlightEn || '');
+  };
+
+  const handleSaveQuickHighlight = (itemId: string) => {
+    const updated = masterDatabase.map((item) => {
+      if (item.id === itemId) {
+        return {
+          ...item,
+          highlight: quickHighlightPt.trim() || undefined,
+          highlightEn: quickHighlightEn.trim() || undefined,
+        };
+      }
+      return item;
+    });
+
+    onUpdateMasterDatabase(updated);
+    setQuickEditingHighlightId(null);
   };
 
   return (
@@ -153,26 +183,25 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
         </button>
       </div>
 
-      {/* ITEMS LIST (SINGLE DISH NAME ONLY + ALERT FOR MISSING EN) */}
+      {/* ITEMS LIST (SINGLE DISH NAME ONLY + ALERT FOR MISSING EN + QUICK HIGHLIGHT EDIT) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredItems.map((item) => {
           const hasEnglishDesc = Boolean(item.descriptionEn && item.descriptionEn.trim());
+          const isQuickEditing = quickEditingHighlightId === item.id;
 
           return (
             <div
               key={item.id}
-              className="glass-card rounded-2xl p-4.5 flex flex-col justify-between hover:border-[#d3a809]/40 transition-all shadow-lg"
+              className="glass-card rounded-2xl p-4.5 flex flex-col justify-between hover:border-[#d3a809]/40 transition-all shadow-lg space-y-3"
             >
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] uppercase font-bold text-[#d3a809] tracking-wider">
                     {item.category === 'main' ? 'Prato Principal' : 'Sobremesa'}
                   </span>
-                  {item.highlight && (
-                    <span className="text-[10px] text-neutral-400 font-mono bg-white/[0.05] px-2 py-0.5 rounded">
-                      {item.highlight}
-                    </span>
-                  )}
+                  <span className="text-[10px] text-neutral-500 font-mono">
+                    {item.id}
+                  </span>
                 </div>
 
                 {/* ONLY ONE NAME */}
@@ -182,7 +211,88 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
                   </h3>
                 </div>
 
-                {/* SMALL ALERT FOR DISHES WITHOUT ENGLISH DESCRIPTION (AS REQUESTED) */}
+                {/* DESTAQUE DISPLAY & QUICK EDIT */}
+                {isQuickEditing ? (
+                  <div className="p-2.5 rounded-xl bg-black/60 border border-[#d3a809]/40 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-neutral-300 text-[11px] flex items-center gap-1">
+                        <Tag className="w-3 h-3 text-[#d3a809]" />
+                        Editar Destaque Rápido
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setQuickEditingHighlightId(null)}
+                        className="text-neutral-500 hover:text-white p-0.5"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] text-neutral-400 block mb-0.5">Destaque (PT-BR):</span>
+                      <input
+                        type="text"
+                        value={quickHighlightPt}
+                        onChange={(e) => setQuickHighlightPt(e.target.value)}
+                        className="w-full px-2.5 py-1 bg-black/70 border border-white/[0.15] rounded text-white text-xs outline-none focus:border-[#d3a809]"
+                      />
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] text-neutral-400 block mb-0.5">Destaque (EN-US):</span>
+                      <input
+                        type="text"
+                        value={quickHighlightEn}
+                        onChange={(e) => setQuickHighlightEn(e.target.value)}
+                        className="w-full px-2.5 py-1 bg-black/70 border border-white/[0.15] rounded text-white text-xs outline-none focus:border-[#d3a809]"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-end gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQuickHighlightPt('');
+                          setQuickHighlightEn('');
+                        }}
+                        className="px-2 py-0.5 text-rose-300 hover:text-rose-200 text-xs"
+                      >
+                        Limpar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveQuickHighlight(item.id)}
+                        className="px-3 py-1 bg-[#d3a809] hover:bg-[#b89100] text-neutral-950 font-bold text-xs rounded transition-colors"
+                      >
+                        Salvar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between text-[11px] py-0.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {item.highlight ? (
+                        <span className="text-[10px] font-semibold text-[#d3a809] bg-[#d3a809]/10 border border-[#d3a809]/20 px-2 py-0.5 rounded">
+                          {item.highlight}
+                          {item.highlightEn && (
+                            <span className="text-neutral-400 font-normal ml-1">· EN: {item.highlightEn}</span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-neutral-500 italic">Sem destaque</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleStartQuickHighlight(item)}
+                      className="text-[10px] text-[#d3a809] hover:underline font-medium cursor-pointer"
+                    >
+                      {item.highlight ? 'Editar Destaque' : '+ Destaque'}
+                    </button>
+                  </div>
+                )}
+
+                {/* SMALL ALERT FOR DISHES WITHOUT ENGLISH DESCRIPTION */}
                 {!hasEnglishDesc && (
                   <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-medium">
                     <AlertCircle className="w-3 h-3 text-amber-400 shrink-0" />
@@ -206,17 +316,15 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
                 </div>
               </div>
 
-              <div className="pt-2.5 mt-3 border-t border-white/[0.08] flex items-center justify-between text-xs">
-                <span className="text-[10px] text-neutral-500 font-mono">
-                  {item.id}
-                </span>
+              <div className="pt-2.5 border-t border-white/[0.08] flex items-center justify-end text-xs">
                 <button
                   type="button"
                   onClick={() => handleDeleteItem(item.id)}
-                  className="text-neutral-500 hover:text-rose-400 transition-colors p-1 cursor-pointer"
+                  className="text-neutral-500 hover:text-rose-400 transition-colors p-1 cursor-pointer flex items-center gap-1 text-[11px]"
                   title="Remover do Acervo Mestre"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Excluir</span>
                 </button>
               </div>
             </div>
@@ -224,7 +332,7 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
         })}
       </div>
 
-      {/* ADD MODAL WITH STRUCTURED DIETARY TAGS & GEMINI TRANSLATION */}
+      {/* ADD MODAL WITH STRUCTURED DIETARY TAGS, GEMINI TRANSLATION & MANUAL EN HIGHLIGHT */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
           <form
@@ -248,36 +356,21 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
             </div>
 
             <div className="space-y-3.5 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-neutral-300 uppercase tracking-wider text-[11px]">
-                    Categoria *
-                  </label>
-                  <select
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value as DishCategory)}
-                    className="w-full mt-1 px-3 py-2 bg-black/50 border border-white/[0.12] rounded-xl text-white outline-none focus:border-[#d3a809]"
-                  >
-                    <option value="main">Prato Principal</option>
-                    <option value="dessert">Sobremesa</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-neutral-300 uppercase tracking-wider text-[11px]">
-                    Destaque (Opcional)
-                  </label>
-                  <input
-                    type="text"
-                    value={newHighlight}
-                    onChange={(e) => setNewHighlight(e.target.value)}
-                    placeholder="Ex: Assinatura, Vegano Nobre"
-                    className="w-full mt-1 px-3 py-2 bg-black/50 border border-white/[0.12] rounded-xl text-white outline-none focus:border-[#d3a809]"
-                  />
-                </div>
+              <div>
+                <label className="font-semibold text-neutral-300 uppercase tracking-wider text-[11px]">
+                  Categoria *
+                </label>
+                <select
+                  value={newCategory}
+                  onChange={(e) => setNewCategory(e.target.value as DishCategory)}
+                  className="w-full mt-1 px-3 py-2 bg-black/50 border border-white/[0.12] rounded-xl text-white outline-none focus:border-[#d3a809]"
+                >
+                  <option value="main">Prato Principal</option>
+                  <option value="dessert">Sobremesa</option>
+                </select>
               </div>
 
-              {/* SINGLE NAME ONLY */}
+              {/* SINGLE NAME ONLY (NO FRENCH TITLE) */}
               <div>
                 <label className="font-semibold text-neutral-300 uppercase tracking-wider text-[11px]">
                   Nome do Prato (Único) *
@@ -286,10 +379,36 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
                   type="text"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Ex: Tornedor de Mignon ao Poivre & Ouro"
                   className="w-full mt-1 px-3.5 py-2 bg-black/50 border border-white/[0.12] rounded-xl text-white outline-none focus:border-[#d3a809] font-medium"
                   required
                 />
+              </div>
+
+              {/* DESTAQUE PT-BR E SLOT MANUAL EN-US */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-neutral-300 uppercase tracking-wider text-[11px]">
+                    Destaque (PT-BR)
+                  </label>
+                  <input
+                    type="text"
+                    value={newHighlight}
+                    onChange={(e) => setNewHighlight(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 bg-black/50 border border-white/[0.12] rounded-xl text-white outline-none focus:border-[#d3a809]"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-neutral-300 uppercase tracking-wider text-[11px]">
+                    Destaque (EN-US) — Slot Manual
+                  </label>
+                  <input
+                    type="text"
+                    value={newHighlightEn}
+                    onChange={(e) => setNewHighlightEn(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 bg-black/50 border border-white/[0.12] rounded-xl text-white outline-none focus:border-[#d3a809] italic"
+                  />
+                </div>
               </div>
 
               {/* DESCRIPTION & GEMINI AI TRANSLATION */}
@@ -316,22 +435,20 @@ export const MasterDatabaseView: React.FC<MasterDatabaseViewProps> = ({
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
                   rows={2}
-                  placeholder="Descrição elegante dos ingredientes e técnica culinária..."
                   className="w-full mt-1 px-3.5 py-2 bg-black/50 border border-white/[0.12] rounded-xl text-white outline-none focus:border-[#d3a809] resize-none"
                   required
                 />
               </div>
 
-              {/* ENGLISH TRANSLATION SLOT (EDITABLE BY USER AS REQUESTED) */}
+              {/* ENGLISH TRANSLATION SLOT (EDITABLE BY USER) */}
               <div>
                 <label className="font-semibold text-neutral-300 uppercase tracking-wider text-[11px]">
-                  Slot de Informação em Inglês (EN-US) — Editável Manualmente:
+                  Slot de Descrição em Inglês (EN-US) — Editável Manualmente:
                 </label>
                 <textarea
                   value={newDescriptionEn}
                   onChange={(e) => setNewDescriptionEn(e.target.value)}
                   rows={2}
-                  placeholder="Escreva ou edite livremente a descrição em inglês..."
                   className="w-full mt-1 px-3.5 py-2 bg-black/50 border border-white/[0.12] rounded-xl text-white outline-none focus:border-[#d3a809] resize-none italic"
                 />
               </div>

@@ -20,6 +20,15 @@ export const ALLOWED_DIETARY_TAGS = [
 
 export type DietaryTag = (typeof ALLOWED_DIETARY_TAGS)[number];
 
+export const DIETARY_TAG_TRANSLATIONS: Record<string, { pt: string; en: string }> = {
+  'Vegano': { pt: 'Vegano', en: 'Vegan' },
+  'Vegetariano': { pt: 'Vegetariano', en: 'Vegetarian' },
+  'Sem glúten': { pt: 'Sem glúten', en: 'Gluten-Free' },
+  'Sem Lactose': { pt: 'Sem Lactose', en: 'Lactose-Free' },
+  'Zero açúcar': { pt: 'Zero açúcar', en: 'Sugar-Free' },
+  'Sem adição de açúcar': { pt: 'Sem adição de açúcar', en: 'No Added Sugar' },
+};
+
 export interface MenuItem {
   id: string;
   category: DishCategory;
@@ -28,7 +37,17 @@ export interface MenuItem {
   descriptionEn?: string; // Slot editável de tradução em inglês
   dietary: string[];
   chefNotes?: string;
-  highlight?: string;
+  highlight?: string; // Destaque PT-BR (ex: Sugestão do Chef)
+  highlightEn?: string; // Slot manual / editável de Destaque EN-US
+}
+
+export type EventSlotKey = 'slot1' | 'slot2' | 'slot3' | 'slot4';
+
+export interface EventSlotConfig {
+  slotKey: EventSlotKey;
+  slotNumber: number; // 1, 2, 3, 4
+  slug: string; // 'eve1', 'eve2', 'eve3', 'eve4'
+  eventId: string | null;
 }
 
 export interface EventConfig {

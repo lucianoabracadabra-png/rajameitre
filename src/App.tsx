@@ -14,12 +14,18 @@ import { MasterDatabaseView } from './components/MasterDatabaseView';
 import { AuditLogView } from './components/AuditLogView';
 import { ReceiptModal } from './components/ReceiptModal';
 import { MaitreGateModal } from './components/MaitreGateModal';
+import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import {
   staffSignIn,
   staffSignOut,
   getStaffSession,
   loadEvents,
   saveEvents,
+  loadEventLibrary,
+  saveEventLibrary,
+  loadCaixaSlots,
+  allocateEventToSlot,
+  CaixaSlot,
   getActiveEventId,
   setActiveEventId,
   loadMasterDatabase,
@@ -49,7 +55,12 @@ export default function App() {
   // Modal gate target: while not null the password modal is shown
   const [gateTarget, setGateTarget] = useState<ActiveTab | null>(null);
 
-  // Multi-Event State: Up to 4 simultaneous events
+  // Supabase management modal
+  const [showSupabaseModal, setShowSupabaseModal] = useState(false);
+
+  // Event Library & Caixa Slots State
+  const [eventLibrary, setEventLibrary] = useState<EventConfig[]>([]);
+  const [caixaSlots, setCaixaSlots] = useState<CaixaSlot[]>([]);
   const [events, setEvents] = useState<EventConfig[]>([]);
   const [currentEventId, setCurrentEventId] = useState<string>('');
 
@@ -66,48 +77,62 @@ export default function App() {
   const [modalOrder, setModalOrder] = useState<GuestOrder | null>(null);
 
   // Detect direct event link for guests (e.g. ?event=eve1 or #/eve1 or #/evt-raja-1)
-  const resolveTargetEvent = (eventList: EventConfig[]): string => {
+  const resolveTargetEvent = (
+    eventList: EventConfig[],
+    slots: CaixaSlot[],
+    library: EventConfig[]
+  ): string => {
     // 1. Check query parameter: ?event=eve1 or ?e=eve1
     const urlParams = new URLSearchParams(window.location.search);
     const paramEvt = urlParams.get('event') || urlParams.get('e');
-    if (paramEvt) {
-      const found = eventList.find(
-        (e) => e.id === paramEvt || e.slug === paramEvt || e.id.endsWith(paramEvt)
-      );
-      if (found) return found.id;
-    }
-
-    // 2. Check hash route: #/eve1 or #/event/eve1 or #eve1
     const rawHash = window.location.hash.replace(/^#\/?/, '').replace(/^event\//, '');
-    if (rawHash && !isStaffTab(rawHash) && rawHash !== 'comanda') {
-      const found = eventList.find(
-        (e) => e.id === rawHash || e.slug === rawHash || e.id.endsWith(rawHash)
-      );
-      if (found) return found.id;
-    }
-
-    // 3. Check pathname: /eve1 or /evt-raja-1
     const pathPart = window.location.pathname.replace(/^\//, '').split('/')[0];
-    if (pathPart) {
-      const found = eventList.find(
-        (e) => e.id === pathPart || e.slug === pathPart
+
+    const targetKey =
+      paramEvt ||
+      (rawHash && !isStaffTab(rawHash) && rawHash !== 'comanda' ? rawHash : null) ||
+      (pathPart || null);
+
+    if (targetKey) {
+      // Check if it matches slot1, slot2, slot3, slot4 or eve1, eve2, eve3, eve4
+      const slotMatch = slots.find(
+        (s) =>
+          s.slug === targetKey ||
+          s.slotKey === targetKey ||
+          `caixa${s.slotNumber}` === targetKey
       );
-      if (found) return found.id;
+      if (slotMatch && slotMatch.eventId) {
+        return slotMatch.eventId;
+      }
+
+      // Check if it matches an event in active allocated eventList
+      const inEvents = eventList.find(
+        (e) => e.id === targetKey || e.slug === targetKey || e.id.endsWith(targetKey)
+      );
+      if (inEvents) return inEvents.id;
+
+      // Check in general eventLibrary
+      const inLib = library.find((e) => e.id === targetKey || e.slug === targetKey);
+      if (inLib) return inLib.id;
     }
 
-    // Fallback to stored active event or first event
+    // Fallback to active event or first event
     const stored = getActiveEventId();
-    return eventList.find((e) => e.id === stored)?.id || eventList[0]?.id || 'evt-raja-1';
+    return eventList.find((e) => e.id === stored)?.id || eventList[0]?.id || library[0]?.id || 'evt-raja-1';
   };
 
   // Initialize data on boot
   useEffect(() => {
+    const loadedLib = loadEventLibrary();
+    const loadedSlots = loadCaixaSlots();
     const loadedEvents = loadEvents();
-    const resolvedEventId = resolveTargetEvent(loadedEvents);
+    const resolvedEventId = resolveTargetEvent(loadedEvents, loadedSlots, loadedLib);
     const loadedMaster = loadMasterDatabase();
     const loadedOrders = loadOrders();
     const loadedLogs = loadAuditLogs();
 
+    setEventLibrary(loadedLib);
+    setCaixaSlots(loadedSlots);
     setEvents(loadedEvents);
     setCurrentEventId(resolvedEventId);
     setMasterDatabase(loadedMaster);
@@ -117,6 +142,8 @@ export default function App() {
     // Sync with Supabase if online/configured
     syncFromSupabase().then((synced) => {
       if (synced) {
+        setEventLibrary(loadEventLibrary());
+        setCaixaSlots(loadCaixaSlots());
         setEvents(loadEvents());
         setOrders(loadOrders());
         setMasterDatabase(loadMasterDatabase());
@@ -147,7 +174,7 @@ export default function App() {
     setCurrentEventId(eventId);
     setActiveEventId(eventId);
     if (currentStaffUser) {
-      const selected = events.find((e) => e.id === eventId);
+      const selected = eventLibrary.find((e) => e.id === eventId) || events.find((e) => e.id === eventId);
       addAuditLog(
         currentStaffUser,
         'TROCA_EVENTO_FOCO',
@@ -155,7 +182,7 @@ export default function App() {
       );
       setAuditLogs(loadAuditLogs());
     }
-  }, [events, currentStaffUser]);
+  }, [events, eventLibrary, currentStaffUser]);
 
   const handleSwitchTab = (tab: ActiveTab) => {
     if (tab === 'comanda') {
@@ -236,32 +263,68 @@ export default function App() {
     setAuditLogs(loadAuditLogs());
   };
 
-  // Update Event Config
-  const handleUpdateEventConfig = (updatedConfig: EventConfig) => {
-    const updatedEvents = events.map((e) => (e.id === updatedConfig.id ? updatedConfig : e));
-    setEvents(updatedEvents);
-    saveEvents(updatedEvents, currentStaffUser || 'MAÎTRE');
+  // Allocate Event to Caixa Slot #1, #2, #3, or #4
+  const handleAllocateSlot = (slotNumber: number, eventId: string | null) => {
+    const { slots, events: updatedEvents } = allocateEventToSlot(
+      slotNumber,
+      eventId,
+      currentStaffUser || 'MAÎTRE'
+    );
+    setCaixaSlots([...slots]);
+    setEvents([...updatedEvents]);
+    setAuditLogs(loadAuditLogs());
+  };
+
+  // Create New Event in Library
+  const handleCreateNewEventInLibrary = (newEvent: EventConfig, allocateToSlotNumber?: number) => {
+    const updatedLib = [newEvent, ...eventLibrary];
+    setEventLibrary(updatedLib);
+    saveEventLibrary(updatedLib, currentStaffUser || 'MAÎTRE');
+
+    if (allocateToSlotNumber) {
+      handleAllocateSlot(allocateToSlotNumber, newEvent.id);
+    }
+
     if (currentStaffUser) {
       addAuditLog(
         currentStaffUser,
-        'ATUALIZAÇÃO_EVENTO',
-        `Evento "${updatedConfig.title}" alterado: Local ${updatedConfig.location}, ${updatedConfig.totalReservations} reservas.`
+        'CRIAÇÃO_EVENTO',
+        `Novo evento criado no repositório: "${newEvent.title}" (${newEvent.location}).`
       );
       setAuditLogs(loadAuditLogs());
     }
   };
 
-  // Add New Event Slot (up to 4 events)
-  const handleAddNewEvent = (newEvent: EventConfig) => {
-    if (events.length >= 4) return;
-    const updated = [...events, newEvent];
-    setEvents(updated);
-    saveEvents(updated, currentStaffUser || 'MAÎTRE');
+  // Delete Event from Library
+  const handleDeleteEventFromLibrary = (eventId: string) => {
+    if (window.confirm('Excluir este evento do repositório?')) {
+      const updatedLib = eventLibrary.filter((e) => e.id !== eventId);
+      setEventLibrary(updatedLib);
+      saveEventLibrary(updatedLib, currentStaffUser || 'MAÎTRE');
+
+      caixaSlots.forEach((slot) => {
+        if (slot.eventId === eventId) {
+          handleAllocateSlot(slot.slotNumber, null);
+        }
+      });
+    }
+  };
+
+  // Update Event Config (in active events and library)
+  const handleUpdateEventConfig = (updatedConfig: EventConfig) => {
+    const updatedEvents = events.map((e) => (e.id === updatedConfig.id ? updatedConfig : e));
+    setEvents(updatedEvents);
+    saveEvents(updatedEvents, currentStaffUser || 'MAÎTRE');
+
+    const updatedLib = eventLibrary.map((e) => (e.id === updatedConfig.id ? updatedConfig : e));
+    setEventLibrary(updatedLib);
+    saveEventLibrary(updatedLib, currentStaffUser || 'MAÎTRE');
+
     if (currentStaffUser) {
       addAuditLog(
         currentStaffUser,
-        'CRIAÇÃO_EVENTO',
-        `Novo evento criado: "${newEvent.title}" no espaço ${newEvent.location}.`
+        'ATUALIZAÇÃO_EVENTO',
+        `Evento "${updatedConfig.title}" alterado: Local ${updatedConfig.location}, ${updatedConfig.totalReservations} reservas.`
       );
       setAuditLogs(loadAuditLogs());
     }
@@ -283,7 +346,10 @@ export default function App() {
 
   // Reset active event to master database
   const handleResetToDefault = () => {
-    const active = events.find((e) => e.id === currentEventId) || events[0];
+    const active =
+      eventLibrary.find((e) => e.id === currentEventId) ||
+      events.find((e) => e.id === currentEventId) ||
+      events[0];
     if (!active) return;
 
     if (window.confirm('Restaurar as opções deste evento com as receitas do Acervo Mestre?')) {
@@ -296,8 +362,22 @@ export default function App() {
     }
   };
 
+  const handleSupabaseSynced = () => {
+    setEventLibrary(loadEventLibrary());
+    setCaixaSlots(loadCaixaSlots());
+    setEvents(loadEvents());
+    setMasterDatabase(loadMasterDatabase());
+    setOrders(loadOrders());
+    setAuditLogs(loadAuditLogs());
+  };
+
   const isGuestMode = activeTab === 'comanda';
-  const activeEvent = events.find((e) => e.id === currentEventId) || events[0] || null;
+  const activeEvent =
+    events.find((e) => e.id === currentEventId) ||
+    eventLibrary.find((e) => e.id === currentEventId) ||
+    events[0] ||
+    eventLibrary[0] ||
+    null;
 
   return (
     <div className="min-h-screen bg-[#00001f] text-neutral-100 flex flex-col relative selection:bg-[#d3a809] selection:text-neutral-950 font-sans">
@@ -313,6 +393,7 @@ export default function App() {
           currentUser={currentStaffUser}
           onSignOut={handleSignOut}
           onOpenGuestComanda={() => handleSwitchTab('comanda')}
+          onOpenSupabaseConfig={() => setShowSupabaseModal(true)}
         />
       )}
 
@@ -328,7 +409,7 @@ export default function App() {
             />
           ) : (
             <div className="min-h-screen flex items-center justify-center text-xs text-neutral-400">
-              Carregando evento...
+              Carregando comanda do evento...
             </div>
           )
         ) : (
@@ -351,10 +432,14 @@ export default function App() {
               {activeTab === 'event_config' && (
                 <EventConfigView
                   events={events}
+                  eventLibrary={eventLibrary}
+                  caixaSlots={caixaSlots}
                   currentEventId={currentEventId}
                   onSelectEvent={handleSelectEvent}
+                  onAllocateSlot={handleAllocateSlot}
                   onUpdateEventConfig={handleUpdateEventConfig}
-                  onAddNewEvent={handleAddNewEvent}
+                  onCreateNewEventInLibrary={handleCreateNewEventInLibrary}
+                  onDeleteEventFromLibrary={handleDeleteEventFromLibrary}
                   masterDatabase={masterDatabase}
                   onResetToDefault={handleResetToDefault}
                   onOpenGuestComanda={() => handleSwitchTab('comanda')}
@@ -396,7 +481,14 @@ export default function App() {
         onSubmit={handleGateSubmit}
       />
 
-      {/* FOOTER: ONLY SHOWN ON ADMIN VIEWS (GUEST HAS ITS OWN MINIMAL FOOTER) */}
+      {/* SUPABASE CONNECTION & SYNC MODAL */}
+      <SupabaseSyncModal
+        open={showSupabaseModal}
+        onClose={() => setShowSupabaseModal(false)}
+        onSynced={handleSupabaseSynced}
+      />
+
+      {/* FOOTER: ONLY SHOWN ON ADMIN VIEWS */}
       {!isGuestMode && staffUnlocked && (
         <footer className="relative z-10 border-t border-white/[0.08] bg-[#00001f] py-4 px-6 text-xs text-neutral-400 no-print">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -406,11 +498,17 @@ export default function App() {
               </span>
               <span className="text-neutral-600">·</span>
               <span>GarçON Gestão Gastronômica</span>
-              {isSupabaseConfigured() && (
-                <span className="text-[10px] bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 px-1.5 py-0.2 rounded font-mono ml-1.5">
-                  Supabase DB Conectado
-                </span>
-              )}
+              <button
+                type="button"
+                onClick={() => setShowSupabaseModal(true)}
+                className={`text-[10px] px-2 py-0.5 rounded font-mono ml-1.5 border cursor-pointer ${
+                  isSupabaseConfigured()
+                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                    : 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                }`}
+              >
+                {isSupabaseConfigured() ? 'Supabase Conectado' : 'Supabase Local'}
+              </button>
             </div>
 
             <div className="flex items-center gap-4 text-[11px] text-neutral-400">

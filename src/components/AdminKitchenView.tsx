@@ -205,10 +205,10 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5 text-[#d3a809]" />
-            Eventos Simultâneos ({events.length}/4)
+            Caixas de Eventos Simultâneos ({events.length}/4)
           </span>
           <span className="text-[11px] text-neutral-400">
-            Selecione para inspecionar
+            Selecione a Caixa para inspecionar
           </span>
         </div>
 
@@ -216,6 +216,7 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
           {events.map((evt, idx) => {
             const isSelected = evt.id === activeEvent.id;
             const evtOrdersCount = orders.filter((o) => o.eventId === evt.id || o.eventTitle === evt.title).length;
+            const slotSlug = evt.slug || `eve${idx + 1}`;
             return (
               <button
                 key={evt.id}
@@ -228,7 +229,7 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
                 }`}
               >
                 <div className="flex items-center justify-between text-[10px] uppercase font-semibold text-[#d3a809]">
-                  <span>Evento #{idx + 1}</span>
+                  <span>Caixa #{idx + 1} ({slotSlug})</span>
                   <span className="font-mono text-white bg-white/[0.1] px-1.5 py-0.2 rounded">
                     {evtOrdersCount} comandas
                   </span>

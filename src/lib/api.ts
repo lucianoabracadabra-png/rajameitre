@@ -18,12 +18,28 @@ export const VALID_CREDENTIALS: Record<string, string> = {
 
 const STORAGE_KEYS = {
   SESSION: 'garcon_staff_session',
+  EVENTS_LIBRARY: 'garcon_events_library',
+  CAIXA_SLOTS: 'garcon_caixa_slots',
   EVENTS: 'garcon_events',
   ACTIVE_EVENT_ID: 'garcon_active_event_id',
   ORDERS: 'garcon_orders',
   MASTER_DB: 'garcon_master_database',
   AUDIT_LOGS: 'garcon_audit_logs',
 };
+
+export interface CaixaSlot {
+  slotNumber: number; // 1, 2, 3, 4
+  slotKey: 'slot1' | 'slot2' | 'slot3' | 'slot4';
+  slug: string; // 'eve1', 'eve2', 'eve3', 'eve4'
+  eventId: string | null;
+}
+
+export const DEFAULT_SLOTS: CaixaSlot[] = [
+  { slotNumber: 1, slotKey: 'slot1', slug: 'eve1', eventId: 'evt-raja-1' },
+  { slotNumber: 2, slotKey: 'slot2', slug: 'eve2', eventId: 'evt-raja-2' },
+  { slotNumber: 3, slotKey: 'slot3', slug: 'eve3', eventId: 'evt-raja-3' },
+  { slotNumber: 4, slotKey: 'slot4', slug: 'eve4', eventId: 'evt-raja-4' },
+];
 
 export type StaffSignInResult =
   | { ok: true; user: StaffUser }
@@ -62,25 +78,120 @@ export async function hasStaffSession(): Promise<boolean> {
   return getStaffSession() !== null;
 }
 
-/* ------------------------------ Estado & Persistência (com Supabase) ------------------------------ */
+/* ------------------------------ Repositório de Eventos & Alocação em Caixas (#1 a #4) ------------------------------ */
 
-export function loadEvents(): EventConfig[] {
+export function loadEventLibrary(): EventConfig[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.EVENTS);
+    const raw = localStorage.getItem(STORAGE_KEYS.EVENTS_LIBRARY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
   } catch (e) {
-    console.error('Erro ao ler eventos:', e);
+    console.error('Erro ao ler repositório de eventos:', e);
   }
-  localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(INITIAL_EVENTS));
+  localStorage.setItem(STORAGE_KEYS.EVENTS_LIBRARY, JSON.stringify(INITIAL_EVENTS));
   return INITIAL_EVENTS;
+}
+
+export function saveEventLibrary(events: EventConfig[], author: string = 'SISTEMA'): void {
+  localStorage.setItem(STORAGE_KEYS.EVENTS_LIBRARY, JSON.stringify(events));
+
+  // Sync to Supabase in background
+  const client = getSupabaseClient();
+  if (client) {
+    void client
+      .from('app_state')
+      .upsert({
+        key: 'events_library',
+        value: events,
+        updated_at: new Date().toISOString(),
+      })
+      .then(
+        ({ error }: any) => {
+          if (error) console.warn('Supabase sync (events_library):', error.message);
+        },
+        (e: any) => console.warn('Supabase sync failed (events_library):', e)
+      );
+  }
+}
+
+export function loadCaixaSlots(): CaixaSlot[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.CAIXA_SLOTS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 4) return parsed;
+    }
+  } catch (e) {
+    console.error('Erro ao ler caixas de eventos:', e);
+  }
+  localStorage.setItem(STORAGE_KEYS.CAIXA_SLOTS, JSON.stringify(DEFAULT_SLOTS));
+  return DEFAULT_SLOTS;
+}
+
+export function saveCaixaSlots(slots: CaixaSlot[]): void {
+  localStorage.setItem(STORAGE_KEYS.CAIXA_SLOTS, JSON.stringify(slots));
+
+  // Sync to Supabase in background
+  const client = getSupabaseClient();
+  if (client) {
+    void client
+      .from('app_state')
+      .upsert({
+        key: 'caixa_slots',
+        value: slots,
+        updated_at: new Date().toISOString(),
+      })
+      .then(
+        ({ error }: any) => {
+          if (error) console.warn('Supabase sync (caixa_slots):', error.message);
+        },
+        (e: any) => console.warn('Supabase sync failed (caixa_slots):', e)
+      );
+  }
+}
+
+/**
+ * Retorna os eventos atualmente alocados nas Caixas #1, #2, #3, #4
+ */
+export function loadEvents(): EventConfig[] {
+  const library = loadEventLibrary();
+  const slots = loadCaixaSlots();
+
+  const allocatedEvents: EventConfig[] = [];
+  slots.forEach((slot) => {
+    if (slot.eventId) {
+      const found = library.find((e) => e.id === slot.eventId);
+      if (found) {
+        allocatedEvents.push({
+          ...found,
+          slug: slot.slug,
+        });
+      }
+    }
+  });
+
+  // Se nada foi alocado, fallback para o primeiro evento da biblioteca
+  if (allocatedEvents.length === 0 && library.length > 0) {
+    allocatedEvents.push({ ...library[0], slug: 'eve1' });
+  }
+
+  localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(allocatedEvents));
+  return allocatedEvents;
 }
 
 export function saveEvents(events: EventConfig[], author: string = 'SISTEMA'): void {
   const limited = events.slice(0, 4);
   localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(limited));
+
+  // Também atualiza o repositório de eventos
+  const library = loadEventLibrary();
+  const updatedLibrary = library.map((libEvt) => {
+    const matching = limited.find((e) => e.id === libEvt.id);
+    return matching || libEvt;
+  });
+  saveEventLibrary(updatedLibrary, author);
 
   // Sync to Supabase in background
   const client = getSupabaseClient();
@@ -98,6 +209,31 @@ export function saveEvents(events: EventConfig[], author: string = 'SISTEMA'): v
         (e: any) => console.warn('Supabase sync failed (events):', e)
       );
   }
+}
+
+export function allocateEventToSlot(
+  slotNumber: number,
+  eventId: string | null,
+  author: string = 'MAÎTRE'
+): { slots: CaixaSlot[]; events: EventConfig[] } {
+  const slots = loadCaixaSlots();
+  const targetIndex = slotNumber - 1;
+  if (targetIndex >= 0 && targetIndex < slots.length) {
+    slots[targetIndex] = {
+      ...slots[targetIndex],
+      eventId,
+    };
+  }
+
+  saveCaixaSlots(slots);
+  const updatedEvents = loadEvents();
+  saveEvents(updatedEvents, author);
+
+  const library = loadEventLibrary();
+  const evtName = eventId ? library.find((e) => e.id === eventId)?.title || eventId : 'Vazia';
+  addAuditLog(author, 'ALOCAÇÃO_CAIXA', `Caixa #${slotNumber} (eve${slotNumber}) alocada com: "${evtName}".`);
+
+  return { slots, events: updatedEvents };
 }
 
 export function getActiveEventId(): string {
@@ -282,6 +418,16 @@ export async function syncFromSupabase(): Promise<boolean> {
   try {
     const { data: stateData } = await client.from('app_state').select('key, value');
     if (stateData && Array.isArray(stateData)) {
+      const libraryRow = stateData.find((r) => r.key === 'events_library');
+      if (libraryRow && Array.isArray(libraryRow.value) && libraryRow.value.length > 0) {
+        localStorage.setItem(STORAGE_KEYS.EVENTS_LIBRARY, JSON.stringify(libraryRow.value));
+      }
+
+      const slotsRow = stateData.find((r) => r.key === 'caixa_slots');
+      if (slotsRow && Array.isArray(slotsRow.value) && slotsRow.value.length === 4) {
+        localStorage.setItem(STORAGE_KEYS.CAIXA_SLOTS, JSON.stringify(slotsRow.value));
+      }
+
       const eventsRow = stateData.find((r) => r.key === 'events');
       if (eventsRow && Array.isArray(eventsRow.value) && eventsRow.value.length > 0) {
         localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(eventsRow.value));
@@ -311,6 +457,33 @@ export async function syncFromSupabase(): Promise<boolean> {
     return true;
   } catch (err) {
     console.warn('Sincronização com Supabase encontrou falha temporária:', err);
+    return false;
+  }
+}
+
+export async function exportAllToSupabase(): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    const library = loadEventLibrary();
+    const slots = loadCaixaSlots();
+    const events = loadEvents();
+    const master = loadMasterDatabase();
+    const logs = loadAuditLogs();
+
+    const now = new Date().toISOString();
+    await client.from('app_state').upsert([
+      { key: 'events_library', value: library, updated_at: now },
+      { key: 'caixa_slots', value: slots, updated_at: now },
+      { key: 'events', value: events, updated_at: now },
+      { key: 'event_config', value: events[0] || null, updated_at: now },
+      { key: 'master_database', value: master, updated_at: now },
+      { key: 'audit_logs', value: logs, updated_at: now },
+    ]);
+    return true;
+  } catch (e) {
+    console.error('Erro ao exportar dados para Supabase:', e);
     return false;
   }
 }

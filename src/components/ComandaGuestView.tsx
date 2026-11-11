@@ -305,8 +305,7 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                 type="text"
                 value={guestName}
                 onChange={(e) => setGuestName(e.target.value)}
-                placeholder={isEn ? 'e.g. Dr. John Doe' : 'Ex: Dra. Mariana Albuquerque'}
-                className="w-full px-3.5 py-2.5 bg-black/40 border border-white/[0.1] focus:border-[#d3a809] rounded-xl text-xs text-white placeholder-neutral-500 outline-none transition-all"
+                className="w-full px-3.5 py-2.5 bg-black/40 border border-white/[0.1] focus:border-[#d3a809] rounded-xl text-xs text-white outline-none transition-all"
               />
             </div>
 
@@ -322,8 +321,7 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                   setPassword(e.target.value);
                   setPasswordError('');
                 }}
-                placeholder={isEn ? 'Event password (e.g. 1123@ALM)' : 'Senha (ex: 1123@ALM)'}
-                className="w-full px-3.5 py-2.5 bg-black/40 border border-white/[0.1] focus:border-[#d3a809] rounded-xl text-xs text-white placeholder-neutral-500 outline-none transition-all font-mono tracking-wider uppercase"
+                className="w-full px-3.5 py-2.5 bg-black/40 border border-white/[0.1] focus:border-[#d3a809] rounded-xl text-xs text-white outline-none transition-all font-mono tracking-wider uppercase"
               />
             </div>
           </div>
@@ -351,6 +349,7 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
             {eventConfig.activeDishes.map((dish) => {
               const isSelected = selectedMainDish?.id === dish.id;
               const dishDescription = isEn && dish.descriptionEn ? dish.descriptionEn : dish.description;
+              const dishHighlight = isEn ? (dish.highlightEn || dish.highlight) : dish.highlight;
 
               return (
                 <div
@@ -366,9 +365,9 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                         <h3 className="text-sm sm:text-base font-bold text-white font-display">
                           {dish.name}
                         </h3>
-                        {dish.highlight && (
+                        {dishHighlight && (
                           <span className="text-[9px] text-[#d3a809] uppercase tracking-wider font-semibold px-2 py-0.5 rounded bg-[#d3a809]/10 border border-[#d3a809]/20">
-                            {dish.highlight}
+                            {dishHighlight}
                           </span>
                         )}
                       </div>
@@ -378,7 +377,7 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                       </p>
 
                       <div className="pt-1.5">
-                        <DietaryIcons tags={dish.dietary} />
+                        <DietaryIcons tags={dish.dietary} language={lang} />
                       </div>
                     </div>
 
@@ -434,7 +433,7 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
                         </p>
 
                         <div className="pt-1.5">
-                          <DietaryIcons tags={dessert.dietary} />
+                          <DietaryIcons tags={dessert.dietary} language={lang} />
                         </div>
                       </div>
 
@@ -479,12 +478,7 @@ export const ComandaGuestView: React.FC<ComandaGuestViewProps> = ({
             type="text"
             value={kitchenNotes}
             onChange={(e) => setKitchenNotes(e.target.value)}
-            placeholder={
-              isEn
-                ? 'e.g. Meat temperature medium rare, severe nut allergy...'
-                : 'Ex: Ponto da carne ao ponto para mal, sem nozes...'
-            }
-            className="w-full px-3.5 py-2.5 bg-black/40 border border-white/[0.1] rounded-xl text-xs text-white placeholder-neutral-500 outline-none focus:border-[#d3a809] transition-all"
+            className="w-full px-3.5 py-2.5 bg-black/40 border border-white/[0.1] rounded-xl text-xs text-white outline-none focus:border-[#d3a809] transition-all"
           />
         </div>
 

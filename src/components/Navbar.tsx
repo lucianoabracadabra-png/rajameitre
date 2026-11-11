@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActiveTab, StaffUser } from '../types';
-import { ExternalLink, History, LogOut, UserCheck } from 'lucide-react';
+import { ExternalLink, History, LogOut, UserCheck, Database } from 'lucide-react';
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -9,6 +9,7 @@ interface NavbarProps {
   currentUser: StaffUser | null;
   onSignOut: () => void;
   onOpenGuestComanda: () => void;
+  onOpenSupabaseConfig: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -18,6 +19,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   onSignOut,
   onOpenGuestComanda,
+  onOpenSupabaseConfig,
 }) => {
   return (
     <header className="sticky top-0 z-50 w-full border-b border-white/[0.08] bg-[#00001f]/95 backdrop-blur-md no-print">
@@ -99,6 +101,16 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Zone 3: Logged User Badge & Actions */}
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={onOpenSupabaseConfig}
+            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono transition-colors border cursor-pointer bg-white/[0.04] border-white/[0.1] hover:border-[#d3a809]/40 text-neutral-300"
+            title="Gerenciar e sincronizar dados com o Supabase"
+          >
+            <Database className="w-3.5 h-3.5 text-[#d3a809]" />
+            <span>Supabase DB</span>
+          </button>
+
           {currentUser && (
             <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs font-mono text-neutral-300">
               <UserCheck className="w-3 h-3 text-[#d3a809]" />

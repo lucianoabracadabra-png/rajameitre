@@ -178,8 +178,13 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
                 R$ 0,00
               </div>
             </div>
-            <div className="text-[11px] font-semibold text-neutral-800 pl-3">
-              {order.mainDish.name}
+            <div className="text-[11px] font-semibold text-neutral-800 pl-3 flex items-center gap-1.5">
+              <span>{order.mainDish.name}</span>
+              {order.mainDish.highlight && (
+                <span className="text-[9px] text-[#b38b00] font-normal">
+                  [{isEn ? (order.mainDish.highlightEn || order.mainDish.highlight) : order.mainDish.highlight}]
+                </span>
+              )}
             </div>
           </div>
 
@@ -194,8 +199,13 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
                   R$ 0,00
                 </div>
               </div>
-              <div className="text-[11px] font-semibold text-neutral-800 pl-3">
-                {order.dessert.name}
+              <div className="text-[11px] font-semibold text-neutral-800 pl-3 flex items-center gap-1.5">
+                <span>{order.dessert.name}</span>
+                {order.dessert.highlight && (
+                  <span className="text-[9px] text-[#b38b00] font-normal">
+                    [{isEn ? (order.dessert.highlightEn || order.dessert.highlight) : order.dessert.highlight}]
+                  </span>
+                )}
               </div>
             </div>
           )}
