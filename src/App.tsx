@@ -451,6 +451,8 @@ export default function App() {
               {activeTab === 'audit_log' && (
                 <AuditLogView
                   logs={auditLogs}
+                  events={eventLibrary}
+                  orders={orders}
                   onOpenGuestComanda={() => handleSwitchTab('comanda')}
                 />
               )}

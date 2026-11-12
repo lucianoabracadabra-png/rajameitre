@@ -29,6 +29,7 @@ import {
   getCurrentDateFormatted,
   formatDateFullExtenso,
   formatTimeRangeExtenso,
+  formatEventCountdown,
 } from '../utils/formatters';
 import { PrintProductionModal } from './PrintProductionModal';
 
@@ -205,7 +206,7 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5 text-[#d3a809]" />
-            Caixas de Eventos Simultâneos ({events.length}/4)
+            EVENTOS ({events.length}/4)
           </span>
           <span className="text-[11px] text-neutral-400">
             Selecione a Caixa para inspecionar
@@ -217,14 +218,17 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
             const isSelected = evt.id === activeEvent.id;
             const evtOrdersCount = orders.filter((o) => o.eventId === evt.id || o.eventTitle === evt.title).length;
             const slotSlug = evt.slug || `eve${idx + 1}`;
+            const countdown = formatEventCountdown(evt.date);
             return (
               <button
                 key={evt.id}
                 type="button"
                 onClick={() => onSelectEvent(evt.id)}
                 className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                  isSelected
-                    ? 'bg-[#d3a809]/15 border-[#d3a809] shadow-md'
+                  countdown.isPast
+                    ? 'bg-neutral-900/60 border-neutral-700/80 opacity-75 grayscale contrast-125'
+                    : isSelected
+                    ? 'bg-[#d3a809]/15 border-[#d3a809] shadow-md ring-1 ring-[#d3a809]/40'
                     : 'bg-black/40 border-white/[0.08] hover:border-white/[0.2] hover:bg-white/[0.02]'
                 }`}
               >
@@ -237,9 +241,22 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
                 <div className="text-xs font-bold text-white truncate font-display mt-0.5">
                   {evt.title}
                 </div>
-                <div className="flex items-center gap-1 text-[11px] text-neutral-400 mt-1">
-                  <MapPin className="w-3 h-3 text-[#d3a809]" />
-                  <span className="truncate">{evt.location}</span>
+                <div className="flex items-center justify-between gap-1 text-[11px] text-neutral-400 mt-1">
+                  <div className="flex items-center gap-1 truncate">
+                    <MapPin className="w-3 h-3 text-[#d3a809] shrink-0" />
+                    <span className="truncate">{evt.location}</span>
+                  </div>
+                  <span
+                    className={`text-[9px] font-bold px-1.5 py-0.2 rounded shrink-0 ${
+                      countdown.badgeStyle === 'today'
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : countdown.badgeStyle === 'upcoming'
+                        ? 'bg-sky-500/20 text-sky-300'
+                        : 'bg-neutral-800 text-neutral-400'
+                    }`}
+                  >
+                    {countdown.label}
+                  </span>
                 </div>
               </button>
             );
