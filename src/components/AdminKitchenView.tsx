@@ -32,6 +32,7 @@ import {
   formatEventCountdown,
 } from '../utils/formatters';
 import { PrintProductionModal } from './PrintProductionModal';
+import { resolveOrderStatus } from '../lib/api';
 
 interface AdminKitchenViewProps {
   events: EventConfig[];
@@ -42,6 +43,7 @@ interface AdminKitchenViewProps {
   onDeleteOrder: (orderId: string) => void;
   onViewReceipt: (order: GuestOrder) => void;
   onOpenGuestComanda: () => void;
+  onLogKitchenPrint?: (event: EventConfig, mode: 'pdf' | 'texto') => void;
 }
 
 export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
@@ -53,6 +55,7 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
   onDeleteOrder,
   onViewReceipt,
   onOpenGuestComanda,
+  onLogKitchenPrint,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -198,6 +201,25 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
   const reservationsTotal = activeEvent.totalReservations || 1;
   const issuedCount = eventOrders.length;
   const reservationPercentage = Math.min(100, Math.round((issuedCount / reservationsTotal) * 100));
+
+  const serviceSummary = useMemo(() => {
+    let awaiting = 0;
+    let inProduction = 0;
+    let delivered = 0;
+    eventOrders.forEach((o) => {
+      const st = resolveOrderStatus(o);
+      if (st === 'entregue') delivered += 1;
+      else if (st === 'em_producao') inProduction += 1;
+      else awaiting += 1;
+    });
+    return {
+      total: eventOrders.length,
+      awaiting,
+      inProduction,
+      delivered,
+      remaining: eventOrders.length - delivered,
+    };
+  }, [eventOrders]);
 
   return (
     <div className="w-full max-w-6xl mx-auto py-7 px-4 sm:px-6 space-y-6">
@@ -520,11 +542,25 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
       {/* 2. REGISTRO GERAL DE COMANDAS DOS CONVIDADOS */}
       <section className="space-y-3 pt-3 border-t border-white/[0.08] no-print">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
+          <div className="space-y-1">
             <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2 font-display">
               <ClipboardList className="w-4 h-4 text-[#d3a809]" />
               Conferência de Comandas do Maître
             </h2>
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="px-2 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-neutral-200 font-mono">
+                Total: <strong>{serviceSummary.total}</strong> pratos
+              </span>
+              <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-200 font-mono font-bold">
+                Faltam: {serviceSummary.remaining}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-200 font-mono">
+                Em Produção: {serviceSummary.inProduction}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 font-mono">
+                Entregues: {serviceSummary.delivered}
+              </span>
+            </div>
           </div>
 
           {/* Search */}
@@ -547,7 +583,8 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
               <thead className="bg-white/[0.03] text-neutral-400 uppercase tracking-wider text-[10px] border-b border-white/[0.08]">
                 <tr>
                   <th className="py-2.5 px-4">Hora</th>
-                  <th className="py-2.5 px-4">Comanda</th>
+                  <th className="py-2.5 px-4">Comanda & Status</th>
+                  <th className="py-2.5 px-4">Mesa / Garçom</th>
                   <th className="py-2.5 px-4">Convidado</th>
                   <th className="py-2.5 px-4">Prato Principal</th>
                   {activeEvent.allowDessert && <th className="py-2.5 px-4">Sobremesa</th>}
@@ -559,58 +596,95 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
                 {filteredOrders.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={activeEvent.allowDessert ? 7 : 6}
+                      colSpan={activeEvent.allowDessert ? 8 : 7}
                       className="py-6 text-center text-neutral-500 italic"
                     >
                       Nenhuma comanda registrada para este evento.
                     </td>
                   </tr>
                 ) : (
-                  filteredOrders.map((order) => (
-                    <tr
-                      key={order.id}
-                      className="hover:bg-white/[0.02] transition-colors text-neutral-200"
-                    >
-                      <td className="py-2.5 px-4 font-mono text-neutral-400">
-                        {order.createdAt}
-                      </td>
-                      <td className="py-2.5 px-4 font-mono font-bold text-[#d3a809]">
-                        {order.code}
-                      </td>
-                      <td className="py-2.5 px-4 font-semibold text-white">
-                        {order.guestName}
-                      </td>
-                      <td className="py-2.5 px-4">
-                        {order.mainDish.name}
-                      </td>
-                      {activeEvent.allowDessert && (
-                        <td className="py-2.5 px-4 text-neutral-300">
-                          {order.dessert ? order.dessert.name : '—'}
+                  filteredOrders.map((order) => {
+                    const st = resolveOrderStatus(order);
+                    return (
+                      <tr
+                        key={order.id}
+                        className="hover:bg-white/[0.02] transition-colors text-neutral-200"
+                      >
+                        <td className="py-2.5 px-4 font-mono text-neutral-400">
+                          {order.createdAt}
                         </td>
-                      )}
-                      <td className="py-2.5 px-4 text-neutral-300 italic max-w-xs truncate">
-                        {order.notes || '—'}
-                      </td>
-                      <td className="py-2.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-2.5">
-                          <button
-                            onClick={() => onViewReceipt(order)}
-                            className="text-[#d3a809] hover:underline text-[11px] font-medium cursor-pointer"
-                          >
-                            Ver Cupom
-                          </button>
-                          <span className="text-neutral-600">·</span>
-                          <button
-                            onClick={() => handleDeleteWithConfirm(order)}
-                            className="text-neutral-400 hover:text-rose-400 p-1 rounded hover:bg-rose-500/10 transition-colors cursor-pointer"
-                            title="Excluir comanda"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                        <td className="py-2.5 px-4 font-mono font-bold text-[#d3a809]">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>{order.code}</span>
+                            {st === 'entregue' ? (
+                              <span
+                                className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/40 text-red-400 font-bold uppercase tracking-wider"
+                                title={order.deliveredBy ? `Entregue por ${order.deliveredBy}` : 'Entregue'}
+                              >
+                                Entregue
+                              </span>
+                            ) : st === 'em_producao' ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-400/35 text-sky-200 font-bold uppercase tracking-wider">
+                                Em Produção
+                              </span>
+                            ) : (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/25 text-amber-300/90 font-semibold uppercase tracking-wider">
+                                Aguardando
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-4 text-[11px] font-mono">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-white font-semibold">
+                              {order.tableNumber
+                                ? /^mesa\s+/i.test(order.tableNumber)
+                                  ? order.tableNumber
+                                  : `Mesa ${order.tableNumber}`
+                                : '—'}
+                            </span>
+                            {order.assignedWaiter && (
+                              <span className="text-[10px] text-[#d3a809]">
+                                {order.assignedWaiter}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-4 font-semibold text-white">
+                          {order.guestName}
+                        </td>
+                        <td className="py-2.5 px-4">
+                          {order.mainDish.name}
+                        </td>
+                        {activeEvent.allowDessert && (
+                          <td className="py-2.5 px-4 text-neutral-300">
+                            {order.dessert ? order.dessert.name : '—'}
+                          </td>
+                        )}
+                        <td className="py-2.5 px-4 text-neutral-300 italic max-w-xs truncate">
+                          {order.notes || '—'}
+                        </td>
+                        <td className="py-2.5 px-4 text-right">
+                          <div className="flex items-center justify-end gap-2.5">
+                            <button
+                              onClick={() => onViewReceipt(order)}
+                              className="text-[#d3a809] hover:underline text-[11px] font-medium cursor-pointer"
+                            >
+                              Ver Cupom
+                            </button>
+                            <span className="text-neutral-600">·</span>
+                            <button
+                              onClick={() => handleDeleteWithConfirm(order)}
+                              className="text-neutral-400 hover:text-rose-400 p-1 rounded hover:bg-rose-500/10 transition-colors cursor-pointer"
+                              title="Excluir comanda"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -625,6 +699,7 @@ export const AdminKitchenView: React.FC<AdminKitchenViewProps> = ({
         eventConfig={activeEvent}
         orders={eventOrders}
         productionSummary={productionSummary}
+        onLogKitchenPrint={(mode) => onLogKitchenPrint?.(activeEvent, mode)}
       />
     </div>
   );

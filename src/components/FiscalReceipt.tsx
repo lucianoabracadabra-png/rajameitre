@@ -1,4 +1,5 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import { GuestOrder, EventConfig, VENUE_TRANSLATIONS, LanguageMode } from '../types';
 import { HOTEL_INFO } from '../data/menuDatabase';
 import { formatDateFullExtenso } from '../utils/formatters';
@@ -19,9 +20,39 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
   onReset,
   onClose,
 }) => {
-  const [copied, setCopied] = React.useState(false);
+  const [copied, setCopied] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const receiptRef = useRef<HTMLDivElement>(null);
   const handleClose = onClose || onReset;
+
+  useEffect(() => {
+    let active = true;
+    const baseUrl =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}${window.location.pathname}`
+        : '';
+    const payload = `${baseUrl}#/garcom?order=${encodeURIComponent(order.code)}`;
+
+    QRCode.toDataURL(payload, {
+      width: 180,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: {
+        dark: '#14151a',
+        light: '#ffffff',
+      },
+    })
+      .then((url) => {
+        if (active) setQrDataUrl(url);
+      })
+      .catch((err) => {
+        console.warn('Erro ao gerar QR Code:', err);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [order.code, order.id]);
 
   const isEn = lang === 'en';
 
@@ -269,27 +300,20 @@ export const FiscalReceipt: React.FC<FiscalReceiptProps> = ({
             <div>STATUS: [{isEn ? 'CONFIRMED' : 'REGISTRADO NO EVENTO'}]</div>
           </div>
 
-          <div className="w-16 h-16 bg-white p-1 border border-neutral-400 flex flex-col items-center justify-center shrink-0 rounded">
-            <svg viewBox="0 0 100 100" className="w-full h-full text-neutral-900 fill-current">
-              <rect x="0" y="0" width="30" height="30" />
-              <rect x="5" y="5" width="20" height="20" fill="white" />
-              <rect x="10" y="10" width="10" height="10" />
-              <rect x="70" y="0" width="30" height="30" />
-              <rect x="75" y="5" width="20" height="20" fill="white" />
-              <rect x="80" y="10" width="10" height="10" />
-              <rect x="0" y="70" width="30" height="30" />
-              <rect x="5" y="75" width="20" height="20" fill="white" />
-              <rect x="10" y="80" width="10" height="10" />
-              <rect x="35" y="10" width="8" height="8" />
-              <rect x="50" y="15" width="12" height="6" />
-              <rect x="35" y="35" width="30" height="6" />
-              <rect x="40" y="45" width="15" height="15" />
-              <rect x="65" y="45" width="10" height="10" />
-              <rect x="45" y="70" width="18" height="8" />
-              <rect x="75" y="75" width="15" height="15" />
-            </svg>
-            <div className="text-[6px] text-neutral-500 tracking-tighter">
-              BH RAJA VIP
+          <div className="w-20 bg-white p-1 border border-neutral-400 flex flex-col items-center justify-center shrink-0 rounded">
+            {qrDataUrl ? (
+              <img
+                src={qrDataUrl}
+                alt={`QR Code ${order.code}`}
+                className="w-[72px] h-[72px] block"
+              />
+            ) : (
+              <div className="w-[72px] h-[72px] flex items-center justify-center text-[8px] text-neutral-400">
+                QR...
+              </div>
+            )}
+            <div className="text-[7px] font-mono font-bold text-neutral-700 tracking-tight leading-none mt-0.5">
+              {order.code}
             </div>
           </div>
         </div>

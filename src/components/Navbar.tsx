@@ -1,12 +1,14 @@
 import React from 'react';
-import { ActiveTab, StaffUser } from '../types';
-import { ExternalLink, History, LogOut, UserCheck } from 'lucide-react';
+import { ActiveTab, StaffRole } from '../types';
+import { ExternalLink, History, LogOut, QrCode, UserCheck } from 'lucide-react';
 
 interface NavbarProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   ordersCount: number;
-  currentUser: StaffUser | null;
+  pendingDeliveryCount?: number;
+  currentUser: string | null;
+  staffRole: StaffRole | null;
   onSignOut: () => void;
   onOpenGuestComanda: () => void;
 }
@@ -15,10 +17,14 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
   ordersCount,
+  pendingDeliveryCount = 0,
   currentUser,
+  staffRole,
   onSignOut,
   onOpenGuestComanda,
 }) => {
+  const isWaiter = staffRole === 'waiter';
+
   return (
     <header className="sticky top-0 z-50 w-full border-b border-white/[0.08] bg-[#00001f]/95 backdrop-blur-md no-print">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 sm:gap-6 px-4 sm:px-6 py-3">
@@ -33,80 +39,108 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Zone 2: Navigation Links */}
-        <nav className="flex items-center gap-4 sm:gap-7 text-xs sm:text-sm tracking-wide font-medium overflow-x-auto py-1">
+        <nav className="flex items-center gap-4 sm:gap-6 text-xs sm:text-sm tracking-wide font-medium overflow-x-auto py-1">
+          {!isWaiter && (
+            <button
+              onClick={() => setActiveTab('admin')}
+              className={`whitespace-nowrap shrink-0 transition-colors py-1 relative flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'admin'
+                  ? 'text-[#d3a809] font-semibold'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              Mapa de Produção
+              {ordersCount > 0 && (
+                <span className="text-[10px] bg-[#d3a809]/20 text-[#d3a809] border border-[#d3a809]/30 px-1.5 py-0.2 rounded font-mono font-bold">
+                  {ordersCount}
+                </span>
+              )}
+              {activeTab === 'admin' && (
+                <span className="absolute bottom-0 left-0 w-full h-[2px] bg-[#d3a809] rounded-full" />
+              )}
+            </button>
+          )}
+
           <button
-            onClick={() => setActiveTab('admin')}
+            onClick={() => setActiveTab('waiter')}
             className={`whitespace-nowrap shrink-0 transition-colors py-1 relative flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'admin'
+              activeTab === 'waiter'
                 ? 'text-[#d3a809] font-semibold'
                 : 'text-neutral-400 hover:text-neutral-200'
             }`}
           >
-            Mapa de Produção
-            {ordersCount > 0 && (
-              <span className="text-[10px] bg-[#d3a809]/20 text-[#d3a809] border border-[#d3a809]/30 px-1.5 py-0.2 rounded font-mono font-bold">
-                {ordersCount}
+            <QrCode className="w-3.5 h-3.5" />
+            Garçom · Entregas
+            {pendingDeliveryCount > 0 && (
+              <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 rounded font-mono font-bold">
+                {pendingDeliveryCount}
               </span>
             )}
-            {activeTab === 'admin' && (
+            {activeTab === 'waiter' && (
               <span className="absolute bottom-0 left-0 w-full h-[2px] bg-[#d3a809] rounded-full" />
             )}
           </button>
 
-          <button
-            onClick={() => setActiveTab('event_config')}
-            className={`whitespace-nowrap shrink-0 transition-colors py-1 relative cursor-pointer ${
-              activeTab === 'event_config'
-                ? 'text-[#d3a809] font-semibold'
-                : 'text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            Configurar Eventos
-            {activeTab === 'event_config' && (
-              <span className="absolute bottom-0 left-0 w-full h-[2px] bg-[#d3a809] rounded-full" />
-            )}
-          </button>
+          {!isWaiter && (
+            <>
+              <button
+                onClick={() => setActiveTab('event_config')}
+                className={`whitespace-nowrap shrink-0 transition-colors py-1 relative cursor-pointer ${
+                  activeTab === 'event_config'
+                    ? 'text-[#d3a809] font-semibold'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                Configurar Eventos
+                {activeTab === 'event_config' && (
+                  <span className="absolute bottom-0 left-0 w-full h-[2px] bg-[#d3a809] rounded-full" />
+                )}
+              </button>
 
-          <button
-            onClick={() => setActiveTab('database')}
-            className={`whitespace-nowrap shrink-0 transition-colors py-1 relative cursor-pointer ${
-              activeTab === 'database'
-                ? 'text-[#d3a809] font-semibold'
-                : 'text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            Acervo Mestre (DB)
-            {activeTab === 'database' && (
-              <span className="absolute bottom-0 left-0 w-full h-[2px] bg-[#d3a809] rounded-full" />
-            )}
-          </button>
+              <button
+                onClick={() => setActiveTab('database')}
+                className={`whitespace-nowrap shrink-0 transition-colors py-1 relative cursor-pointer ${
+                  activeTab === 'database'
+                    ? 'text-[#d3a809] font-semibold'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                Acervo Mestre (DB)
+                {activeTab === 'database' && (
+                  <span className="absolute bottom-0 left-0 w-full h-[2px] bg-[#d3a809] rounded-full" />
+                )}
+              </button>
 
-          <button
-            onClick={() => setActiveTab('audit_log')}
-            className={`whitespace-nowrap shrink-0 transition-colors py-1 relative flex items-center gap-1 cursor-pointer ${
-              activeTab === 'audit_log'
-                ? 'text-[#d3a809] font-semibold'
-                : 'text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <History className="w-3.5 h-3.5" />
-            Histórico
-            {activeTab === 'audit_log' && (
-              <span className="absolute bottom-0 left-0 w-full h-[2px] bg-[#d3a809] rounded-full" />
-            )}
-          </button>
+              <button
+                onClick={() => setActiveTab('audit_log')}
+                className={`whitespace-nowrap shrink-0 transition-colors py-1 relative flex items-center gap-1 cursor-pointer ${
+                  activeTab === 'audit_log'
+                    ? 'text-[#d3a809] font-semibold'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />
+                Histórico
+                {activeTab === 'audit_log' && (
+                  <span className="absolute bottom-0 left-0 w-full h-[2px] bg-[#d3a809] rounded-full" />
+                )}
+              </button>
+            </>
+          )}
         </nav>
 
         {/* Zone 3: Logged User Badge & Actions */}
         <div className="flex items-center gap-2 shrink-0">
           {currentUser && (
-            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs font-mono text-neutral-300">
-              <UserCheck className="w-3 h-3 text-[#d3a809]" />
-              <span>{currentUser}</span>
+            <div className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[11px] sm:text-xs font-mono text-neutral-300">
+              <UserCheck className="w-3 h-3 text-[#d3a809] shrink-0" />
+              <span className="truncate max-w-[90px] sm:max-w-none">
+                {isWaiter ? `Garçom · ${currentUser}` : currentUser}
+              </span>
               <button
                 onClick={onSignOut}
-                className="ml-1 text-neutral-500 hover:text-rose-400 p-0.5 cursor-pointer"
-                title="Sair do Maître"
+                className="ml-0.5 text-neutral-500 hover:text-rose-400 p-0.5 cursor-pointer shrink-0"
+                title={isWaiter ? 'Sair do Garçom' : 'Sair do Maître'}
               >
                 <LogOut className="w-3 h-3" />
               </button>

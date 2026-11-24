@@ -36,7 +36,9 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMaitre, setSelectedMaitre] = useState<string>('all');
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
-  const [showTechnicalLogs, setShowTechnicalLogs] = useState(false);
+  const [showTechnicalLogs, setShowTechnicalLogs] = useState(true);
+  const [logCategory, setLogCategory] = useState<'all' | 'orders' | 'edits' | 'system'>('all');
+  const [logSearch, setLogSearch] = useState('');
 
   // Compute Event Analytics per Event
   const eventAnalyticsList = useMemo(() => {
@@ -433,52 +435,136 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
         )}
       </div>
 
-      {/* SECONDARY SECTION: AUDITORIA OPERACIONAL / LOGS TÉCNICOS */}
+      {/* SECONDARY SECTION: AUDITORIA COMPLETA DE TRANSAÇÕES & ALTERAÇÕES */}
       <div className="pt-6 border-t border-white/[0.08] space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <button
             type="button"
             onClick={() => setShowTechnicalLogs(!showTechnicalLogs)}
-            className="text-xs text-neutral-400 hover:text-white flex items-center gap-1.5 cursor-pointer font-medium"
+            className="text-sm text-white hover:text-[#d3a809] flex items-center gap-2 cursor-pointer font-bold font-display"
           >
-            {showTechnicalLogs ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            <span>{showTechnicalLogs ? 'Ocultar' : 'Exibir'} Registro Cronológico de Auditoria Técnica ({logs.length} registros)</span>
+            {showTechnicalLogs ? <ChevronUp className="w-4 h-4 text-[#d3a809]" /> : <ChevronDown className="w-4 h-4 text-[#d3a809]" />}
+            <span>Registro Completo de Transações & Alterações ({logs.length})</span>
           </button>
+
+          {showTechnicalLogs && (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 bg-black/40 p-1 rounded-lg border border-white/[0.08]">
+                {(
+                  [
+                    { key: 'all', label: 'Todas' },
+                    { key: 'orders', label: 'Pedidos & Entregas' },
+                    { key: 'edits', label: 'Edições' },
+                    { key: 'system', label: 'Sistema & Eventos' },
+                  ] as const
+                ).map((cat) => (
+                  <button
+                    key={cat.key}
+                    type="button"
+                    onClick={() => setLogCategory(cat.key)}
+                    className={`px-2.5 py-1 rounded text-[11px] font-semibold cursor-pointer transition-colors ${
+                      logCategory === cat.key
+                        ? 'bg-[#d3a809] text-neutral-950 font-bold'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+
+              <input
+                type="text"
+                value={logSearch}
+                onChange={(e) => setLogSearch(e.target.value)}
+                placeholder="Filtrar log (CMD, garçom, mesa)..."
+                className="px-3 py-1.5 bg-black/50 border border-white/[0.1] rounded-lg text-xs text-white placeholder-neutral-500 outline-none focus:border-[#d3a809] w-full sm:w-56"
+              />
+            </div>
+          )}
         </div>
 
         {showTechnicalLogs && (
           <div className="glass-panel rounded-2xl overflow-hidden border border-white/[0.08] animate-in fade-in duration-200">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
               <table className="w-full text-left text-xs">
-                <thead className="bg-white/[0.03] text-neutral-400 uppercase tracking-wider text-[10px] border-b border-white/[0.08]">
+                <thead className="bg-white/[0.03] text-neutral-400 uppercase tracking-wider text-[10px] border-b border-white/[0.08] sticky top-0 backdrop-blur-md">
                   <tr>
                     <th className="py-2.5 px-4">Data & Hora</th>
-                    <th className="py-2.5 px-4">Usuário</th>
-                    <th className="py-2.5 px-4">Ação</th>
-                    <th className="py-2.5 px-4">Registro Operacional</th>
+                    <th className="py-2.5 px-4">Usuário / Garçom</th>
+                    <th className="py-2.5 px-4">Transação</th>
+                    <th className="py-2.5 px-4">Detalhes & Alterações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/[0.04]">
-                  {logs.slice(0, 50).map((log) => (
-                    <tr key={log.id} className="hover:bg-white/[0.02]">
-                      <td className="py-2.5 px-4 font-mono text-neutral-400 whitespace-nowrap text-[11px]">
-                        {log.timestamp}
-                      </td>
-                      <td className="py-2.5 px-4 whitespace-nowrap">
-                        <span className="font-mono font-bold text-white text-[11px] bg-white/[0.06] px-1.5 py-0.5 rounded">
-                          {log.author}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-4 whitespace-nowrap">
-                        <span className="text-[10px] uppercase font-bold text-[#d3a809] bg-[#d3a809]/10 px-1.5 py-0.5 rounded">
-                          {log.action}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-4 text-neutral-300 font-light text-xs">
-                        {log.details}
-                      </td>
-                    </tr>
-                  ))}
+                  {logs
+                    .filter((log) => {
+                      if (logCategory === 'orders') {
+                        const isOrderAction = [
+                          'COMANDA_EMITIDA',
+                          'ATIVAÇÃO_PEDIDO',
+                          'ENTREGA_COMANDA',
+                          'ESTORNO_ENTREGA',
+                          'EXCLUSÃO_COMANDA',
+                          'SIMULAÇÃO_PEDIDO',
+                        ].includes(log.action);
+                        if (!isOrderAction) return false;
+                      } else if (logCategory === 'edits') {
+                        const isEditAction = [
+                          'EDIÇÃO_PEDIDO',
+                          'ATUALIZAÇÃO_EVENTO',
+                          'ATUALIZAÇÃO_ACERVO',
+                          'ALOCAÇÃO_CAIXA',
+                          'RESTAURAÇÃO_CARDÁPIO',
+                          'EXCLUSÃO_EVENTO',
+                        ].includes(log.action);
+                        if (!isEditAction) return false;
+                      } else if (logCategory === 'system') {
+                        const isSysAction = [
+                          'LOGIN_MAITRE',
+                          'LOGOUT_MAITRE',
+                          'LOGIN_GARCOM',
+                          'LOGOUT_GARCOM',
+                          'CRIAÇÃO_EVENTO',
+                          'EXCLUSÃO_EVENTO',
+                          'ATUALIZAÇÃO_EVENTO',
+                          'ATUALIZAÇÃO_ACERVO',
+                          'ALOCAÇÃO_CAIXA',
+                          'RESTAURAÇÃO_CARDÁPIO',
+                          'IMPRESSÃO_MAPA_COZINHA',
+                          'TROCA_EVENTO_FOCO',
+                        ].includes(log.action);
+                        if (!isSysAction) return false;
+                      }
+                      const q = logSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        log.author.toLowerCase().includes(q) ||
+                        log.action.toLowerCase().includes(q) ||
+                        log.details.toLowerCase().includes(q)
+                      );
+                    })
+                    .slice(0, 150)
+                    .map((log) => (
+                      <tr key={log.id} className="hover:bg-white/[0.02]">
+                        <td className="py-2.5 px-4 font-mono text-neutral-400 whitespace-nowrap text-[11px]">
+                          {log.timestamp}
+                        </td>
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          <span className="font-mono font-bold text-white text-[11px] bg-white/[0.06] px-1.5 py-0.5 rounded">
+                            {log.author}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          <span className="text-[10px] uppercase font-bold text-[#d3a809] bg-[#d3a809]/10 px-1.5 py-0.5 rounded">
+                            {log.action}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-4 text-neutral-300 font-light text-xs">
+                          {log.details}
+                        </td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>

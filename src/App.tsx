@@ -4,11 +4,12 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { ActiveTab, EventConfig, GuestOrder, MenuItem, StaffUser, AuditLogEntry } from './types';
+import { ActiveTab, EventConfig, GuestOrder, MenuItem, StaffRole, AuditLogEntry } from './types';
 import { HOTEL_INFO } from './data/menuDatabase';
 import { Navbar } from './components/Navbar';
 import { ComandaGuestView } from './components/ComandaGuestView';
 import { AdminKitchenView } from './components/AdminKitchenView';
+import { WaiterDeliveryView } from './components/WaiterDeliveryView';
 import { EventConfigView } from './components/EventConfigView';
 import { MasterDatabaseView } from './components/MasterDatabaseView';
 import { AuditLogView } from './components/AuditLogView';
@@ -30,28 +31,59 @@ import {
   loadMasterDatabase,
   saveMasterDatabase,
   loadOrders,
-  saveOrders,
   insertOrder,
   deleteOrder,
+  activateAndUpdateOrder,
+  markOrderDelivered,
+  unmarkOrderDelivered,
+  resolveOrderStatus,
+  WaiterOrderUpdatePayload,
   loadAuditLogs,
   addAuditLog,
   submitOrder,
   syncFromSupabase,
 } from './lib/api';
 
-const STAFF_TABS: ActiveTab[] = ['admin', 'event_config', 'database', 'audit_log'];
+const STAFF_TABS: ActiveTab[] = ['admin', 'waiter', 'event_config', 'database', 'audit_log'];
 const isStaffTab = (t: string): t is ActiveTab => STAFF_TABS.includes(t as ActiveTab);
+
+function parseStaffHash(rawHashValue: string): {
+  tab: ActiveTab | null;
+  scannedOrder: string | null;
+} {
+  const cleaned = rawHashValue.replace(/^#\/?/, '');
+  const [pathPart, queryPart] = cleaned.split('?');
+  const normalizedPath = (pathPart || '').trim().toLowerCase();
+
+  let scannedOrder: string | null = null;
+  if (queryPart) {
+    const params = new URLSearchParams(queryPart);
+    scannedOrder = params.get('order') || params.get('code') || null;
+  }
+
+  if (normalizedPath === 'garcom' || normalizedPath === 'waiter') {
+    return { tab: 'waiter', scannedOrder };
+  }
+  if (isStaffTab(normalizedPath)) {
+    return { tab: normalizedPath, scannedOrder };
+  }
+  return { tab: null, scannedOrder };
+}
 
 export default function App() {
   // Navigation: defaults to isolated guest comanda
   const [activeTab, setActiveTab] = useState<ActiveTab>('comanda');
 
-  // Staff (Maître) access: true only after authentication
+  // Staff access: Maître (FSOUZA, LAUGUSTO, GILSON) or Garçom (dynamic name)
   const [staffUnlocked, setStaffUnlocked] = useState(false);
-  const [currentStaffUser, setCurrentStaffUser] = useState<StaffUser | null>(null);
+  const [currentStaffUser, setCurrentStaffUser] = useState<string | null>(null);
+  const [staffRole, setStaffRole] = useState<StaffRole | null>(null);
 
   // Modal gate target: while not null the password modal is shown
   const [gateTarget, setGateTarget] = useState<ActiveTab | null>(null);
+
+  // Deep-linked QR order code for Waiter view (#/garcom?order=CMD-XXXX)
+  const [pendingScannedOrder, setPendingScannedOrder] = useState<string | null>(null);
 
   // Event Library & Caixa Slots State
   const [eventLibrary, setEventLibrary] = useState<EventConfig[]>([]);
@@ -77,19 +109,20 @@ export default function App() {
     slots: CaixaSlot[],
     library: EventConfig[]
   ): string => {
-    // 1. Check query parameter: ?event=eve1 or ?e=eve1
     const urlParams = new URLSearchParams(window.location.search);
     const paramEvt = urlParams.get('event') || urlParams.get('e');
-    const rawHash = window.location.hash.replace(/^#\/?/, '').replace(/^event\//, '');
+    const rawHash = window.location.hash
+      .replace(/^#\/?/, '')
+      .split('?')[0]
+      .replace(/^event\//, '');
     const pathPart = window.location.pathname.replace(/^\//, '').split('/')[0];
 
-    const targetKey =
-      paramEvt ||
-      (rawHash && !isStaffTab(rawHash) && rawHash !== 'comanda' ? rawHash : null) ||
-      (pathPart || null);
+    const isReservedHash =
+      !rawHash || isStaffTab(rawHash) || rawHash === 'comanda' || rawHash === 'garcom';
+
+    const targetKey = paramEvt || (!isReservedHash ? rawHash : null) || (pathPart || null);
 
     if (targetKey) {
-      // Check if it matches slot1, slot2, slot3, slot4 or eve1, eve2, eve3, eve4
       const slotMatch = slots.find(
         (s) =>
           s.slug === targetKey ||
@@ -100,18 +133,15 @@ export default function App() {
         return slotMatch.eventId;
       }
 
-      // Check if it matches an event in active allocated eventList
       const inEvents = eventList.find(
         (e) => e.id === targetKey || e.slug === targetKey || e.id.endsWith(targetKey)
       );
       if (inEvents) return inEvents.id;
 
-      // Check in general eventLibrary
       const inLib = library.find((e) => e.id === targetKey || e.slug === targetKey);
       if (inLib) return inLib.id;
     }
 
-    // Fallback to active event or first event
     const stored = getActiveEventId();
     return eventList.find((e) => e.id === stored)?.id || eventList[0]?.id || library[0]?.id || 'evt-raja-1';
   };
@@ -134,7 +164,6 @@ export default function App() {
     setOrders(loadedOrders);
     setAuditLogs(loadedLogs);
 
-    // Sync with Supabase if online/configured
     syncFromSupabase().then((synced) => {
       if (synced) {
         setEventLibrary(loadEventLibrary());
@@ -150,25 +179,78 @@ export default function App() {
     const existingStaff = getStaffSession();
     if (existingStaff) {
       setStaffUnlocked(true);
-      setCurrentStaffUser(existingStaff);
+      setCurrentStaffUser(existingStaff.username);
+      setStaffRole(existingStaff.role);
     }
 
-    // Hash navigation for staff
-    const hash = window.location.hash.replace('#', '');
-    if (isStaffTab(hash)) {
+    // Hash navigation for staff & QR code deep links (#/garcom?order=CMD-XXXX)
+    const { tab, scannedOrder } = parseStaffHash(window.location.hash);
+    if (scannedOrder) {
+      setPendingScannedOrder(scannedOrder);
+    }
+
+    if (tab) {
       if (existingStaff) {
-        setActiveTab(hash as ActiveTab);
+        const safeTab = existingStaff.role === 'waiter' ? 'waiter' : tab;
+        setActiveTab(safeTab);
       } else {
-        setGateTarget(hash as ActiveTab);
+        setGateTarget(tab);
       }
     }
+  }, []);
+
+  // Listen to hashchange so scanning a QR deep link while open works cleanly
+  useEffect(() => {
+    const onHashChange = () => {
+      const { tab, scannedOrder } = parseStaffHash(window.location.hash);
+      if (scannedOrder) {
+        setPendingScannedOrder(scannedOrder);
+      }
+      if (tab) {
+        if (staffUnlocked) {
+          const safeTab = staffRole === 'waiter' ? 'waiter' : tab;
+          setActiveTab(safeTab);
+        } else {
+          setGateTarget(tab);
+        }
+      }
+    };
+
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, [staffUnlocked, staffRole]);
+
+  // Live background sync across waiters, guests, and maîtres (every 8s + focus)
+  useEffect(() => {
+    const refreshFromCloud = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const synced = await syncFromSupabase();
+      if (synced) {
+        setEventLibrary(loadEventLibrary());
+        setCaixaSlots(loadCaixaSlots());
+        setEvents(loadEvents());
+        setOrders(loadOrders());
+        setMasterDatabase(loadMasterDatabase());
+        setAuditLogs(loadAuditLogs());
+      }
+    };
+
+    const intervalId = window.setInterval(refreshFromCloud, 8000);
+    window.addEventListener('focus', refreshFromCloud);
+    document.addEventListener('visibilitychange', refreshFromCloud);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refreshFromCloud);
+      document.removeEventListener('visibilitychange', refreshFromCloud);
+    };
   }, []);
 
   // Sync active event ID
   const handleSelectEvent = useCallback((eventId: string) => {
     setCurrentEventId(eventId);
     setActiveEventId(eventId);
-    if (currentStaffUser) {
+    if (currentStaffUser && staffRole === 'maitre') {
       const selected = eventLibrary.find((e) => e.id === eventId) || events.find((e) => e.id === eventId);
       addAuditLog(
         currentStaffUser,
@@ -177,7 +259,7 @@ export default function App() {
       );
       setAuditLogs(loadAuditLogs());
     }
-  }, [events, eventLibrary, currentStaffUser]);
+  }, [events, eventLibrary, currentStaffUser, staffRole]);
 
   const handleSwitchTab = (tab: ActiveTab) => {
     if (tab === 'comanda') {
@@ -187,26 +269,41 @@ export default function App() {
     }
 
     if (staffUnlocked) {
-      setActiveTab(tab);
-      window.location.hash = tab;
+      const safeTab = staffRole === 'waiter' ? 'waiter' : tab;
+      setActiveTab(safeTab);
+      window.location.hash = safeTab;
       return;
     }
 
-    // Always require password modal when entering Maître area
+    // Always require password modal when entering staff area
     setGateTarget(tab);
   };
 
-  const handleGateSubmit = async (user: StaffUser, password: string): Promise<string | null> => {
-    const result = await staffSignIn(user, password);
+  const handleGateSubmit = async (
+    username: string,
+    password: string,
+    mode: StaffRole
+  ): Promise<string | null> => {
+    const result = await staffSignIn(username, password, mode);
     if (!result.ok) {
-      return 'Senha incorreta para o usuário selecionado.';
+      if (result.error === 'missing_name') {
+        return 'Informe seu nome para identificar suas entregas.';
+      }
+      return mode === 'waiter'
+        ? 'Senha dos garçons incorreta.'
+        : 'Senha incorreta para o usuário selecionado.';
     }
 
     setStaffUnlocked(true);
-    setCurrentStaffUser(user);
-    const target = gateTarget || 'admin';
+    setCurrentStaffUser(result.session.username);
+    setStaffRole(result.session.role);
+
+    const target: ActiveTab =
+      result.session.role === 'waiter' ? 'waiter' : gateTarget || 'admin';
     setActiveTab(target);
-    window.location.hash = target;
+    if (!pendingScannedOrder) {
+      window.location.hash = target;
+    }
     setGateTarget(null);
     setAuditLogs(loadAuditLogs());
     return null;
@@ -214,6 +311,7 @@ export default function App() {
 
   const handleGateClose = () => {
     setGateTarget(null);
+    setPendingScannedOrder(null);
     if (window.location.hash.replace('#', '') !== 'comanda') {
       window.location.hash = 'comanda';
     }
@@ -223,6 +321,8 @@ export default function App() {
     await staffSignOut();
     setStaffUnlocked(false);
     setCurrentStaffUser(null);
+    setStaffRole(null);
+    setPendingScannedOrder(null);
     setActiveTab('comanda');
     window.location.hash = 'comanda';
     setAuditLogs(loadAuditLogs());
@@ -256,6 +356,39 @@ export default function App() {
     deleteOrder(orderId, author);
     setOrders(loadOrders());
     setAuditLogs(loadAuditLogs());
+  };
+
+  // Activate in kitchen / Edit order fields & table assignment (Waiter & Maître)
+  const handleActivateAndUpdateOrder = (
+    orderId: string,
+    updates: WaiterOrderUpdatePayload
+  ): GuestOrder | null => {
+    const updatedOrder = activateAndUpdateOrder(orderId, updates, currentStaffUser || 'GARÇOM');
+    setOrders(loadOrders());
+    setAuditLogs(loadAuditLogs());
+    return updatedOrder;
+  };
+
+  // Mark / Unmark Order Delivered (Waiter & Maître capability)
+  const handleMarkOrderDelivered = (
+    orderId: string,
+    tableNumberOverride?: string
+  ): GuestOrder | null => {
+    const updatedOrder = markOrderDelivered(
+      orderId,
+      currentStaffUser || 'GARÇOM',
+      tableNumberOverride
+    );
+    setOrders(loadOrders());
+    setAuditLogs(loadAuditLogs());
+    return updatedOrder;
+  };
+
+  const handleUnmarkOrderDelivered = (orderId: string): GuestOrder | null => {
+    const updatedOrder = unmarkOrderDelivered(orderId, currentStaffUser || 'STAFF');
+    setOrders(loadOrders());
+    setAuditLogs(loadAuditLogs());
+    return updatedOrder;
   };
 
   // Allocate Event to Caixa Slot #1, #2, #3, or #4
@@ -292,6 +425,7 @@ export default function App() {
 
   // Delete Event from Library
   const handleDeleteEventFromLibrary = (eventId: string) => {
+    const target = eventLibrary.find((e) => e.id === eventId);
     if (window.confirm('Excluir este evento do repositório?')) {
       const updatedLib = eventLibrary.filter((e) => e.id !== eventId);
       setEventLibrary(updatedLib);
@@ -302,11 +436,22 @@ export default function App() {
           handleAllocateSlot(slot.slotNumber, null);
         }
       });
+
+      addAuditLog(
+        currentStaffUser || 'MAÎTRE',
+        'EXCLUSÃO_EVENTO',
+        `Evento "${target?.title || eventId}" (${target?.location || '—'}) removido do repositório.`
+      );
+      setAuditLogs(loadAuditLogs());
     }
   };
 
-  // Update Event Config (in active events and library)
+  // Update Event Config (in active events and library) with detailed field diff
   const handleUpdateEventConfig = (updatedConfig: EventConfig) => {
+    const previous =
+      eventLibrary.find((e) => e.id === updatedConfig.id) ||
+      events.find((e) => e.id === updatedConfig.id);
+
     const updatedEvents = events.map((e) => (e.id === updatedConfig.id ? updatedConfig : e));
     setEvents(updatedEvents);
     saveEvents(updatedEvents, currentStaffUser || 'MAÎTRE');
@@ -315,25 +460,69 @@ export default function App() {
     setEventLibrary(updatedLib);
     saveEventLibrary(updatedLib, currentStaffUser || 'MAÎTRE');
 
+    const diffs: string[] = [];
+    if (previous) {
+      if (previous.title !== updatedConfig.title) diffs.push(`Título: "${previous.title}" → "${updatedConfig.title}"`);
+      if (previous.date !== updatedConfig.date) diffs.push(`Data: ${previous.date} → ${updatedConfig.date}`);
+      if (previous.time !== updatedConfig.time) diffs.push(`Horário: ${previous.time} → ${updatedConfig.time}`);
+      if (previous.location !== updatedConfig.location) diffs.push(`Local: ${previous.location} → ${updatedConfig.location}`);
+      if (previous.totalReservations !== updatedConfig.totalReservations) {
+        diffs.push(`Reservas: ${previous.totalReservations} → ${updatedConfig.totalReservations}`);
+      }
+      if (previous.accessCode !== updatedConfig.accessCode) diffs.push(`Senha alterada (${updatedConfig.accessCode})`);
+      if (previous.allowDessert !== updatedConfig.allowDessert) {
+        diffs.push(`Sobremesa: ${previous.allowDessert ? 'Ativa' : 'Desativada'} → ${updatedConfig.allowDessert ? 'Ativa' : 'Desativada'}`);
+      }
+      if ((previous.coordinatorName || '') !== (updatedConfig.coordinatorName || '')) {
+        diffs.push(`Responsável: "${previous.coordinatorName || '—'}" → "${updatedConfig.coordinatorName || '—'}"`);
+      }
+      if (previous.activeDishes.length !== updatedConfig.activeDishes.length) {
+        diffs.push(`Pratos no evento: ${previous.activeDishes.length} → ${updatedConfig.activeDishes.length}`);
+      }
+      if (previous.activeDesserts.length !== updatedConfig.activeDesserts.length) {
+        diffs.push(`Sobremesas no evento: ${previous.activeDesserts.length} → ${updatedConfig.activeDesserts.length}`);
+      }
+    }
+
     if (currentStaffUser) {
       addAuditLog(
         currentStaffUser,
         'ATUALIZAÇÃO_EVENTO',
-        `Evento "${updatedConfig.title}" alterado: Local ${updatedConfig.location}, ${updatedConfig.totalReservations} reservas.`
+        diffs.length > 0
+          ? `Evento "${updatedConfig.title}" atualizado: ${diffs.join(' | ')}.`
+          : `Evento "${updatedConfig.title}" salvo (${updatedConfig.location}, ${updatedConfig.totalReservations} reservas).`
       );
       setAuditLogs(loadAuditLogs());
     }
   };
 
-  // Update Master Database
+  // Update Master Database with exact dish diff
   const handleUpdateMasterDatabase = (updatedDB: MenuItem[]) => {
+    const prevIds = new Map<string, MenuItem>(masterDatabase.map((m) => [m.id, m]));
+    const nextIds = new Map<string, MenuItem>(updatedDB.map((m) => [m.id, m]));
+
+    const added = updatedDB.filter((m) => !prevIds.has(m.id)).map((m) => m.name);
+    const removed = masterDatabase.filter((m) => !nextIds.has(m.id)).map((m) => m.name);
+    const edited = updatedDB
+      .filter((m) => {
+        const old = prevIds.get(m.id);
+        return old && JSON.stringify(old) !== JSON.stringify(m);
+      })
+      .map((m) => m.name);
+
     setMasterDatabase(updatedDB);
     saveMasterDatabase(updatedDB);
     if (currentStaffUser) {
+      const parts: string[] = [];
+      if (added.length > 0) parts.push(`Adicionados: ${added.join(', ')}`);
+      if (edited.length > 0) parts.push(`Editados: ${edited.join(', ')}`);
+      if (removed.length > 0) parts.push(`Removidos: ${removed.join(', ')}`);
       addAuditLog(
         currentStaffUser,
         'ATUALIZAÇÃO_ACERVO',
-        `Acervo Mestre atualizado com ${updatedDB.length} pratos/sobremesas.`
+        parts.length > 0
+          ? `Acervo Mestre (${updatedDB.length} itens): ${parts.join(' | ')}.`
+          : `Acervo Mestre atualizado (${updatedDB.length} pratos/sobremesas).`
       );
       setAuditLogs(loadAuditLogs());
     }
@@ -354,15 +543,21 @@ export default function App() {
         activeDesserts: masterDatabase.filter((m) => m.category === 'dessert').slice(0, 3),
       };
       handleUpdateEventConfig(resetConfig);
+      addAuditLog(
+        currentStaffUser || 'MAÎTRE',
+        'RESTAURAÇÃO_CARDÁPIO',
+        `Cardápio do evento "${active.title}" restaurado a partir do Acervo Mestre.`
+      );
+      setAuditLogs(loadAuditLogs());
     }
   };
 
-  const handleSupabaseSynced = () => {
-    setEventLibrary(loadEventLibrary());
-    setCaixaSlots(loadCaixaSlots());
-    setEvents(loadEvents());
-    setMasterDatabase(loadMasterDatabase());
-    setOrders(loadOrders());
+  const handleLogKitchenPrint = (event: EventConfig, mode: 'pdf' | 'texto') => {
+    addAuditLog(
+      currentStaffUser || 'MAÎTRE',
+      'IMPRESSÃO_MAPA_COZINHA',
+      `Mapa de Produção (${mode.toUpperCase()}) gerado para cozinha no evento "${event.title}".`
+    );
     setAuditLogs(loadAuditLogs());
   };
 
@@ -373,6 +568,8 @@ export default function App() {
     events[0] ||
     eventLibrary[0] ||
     null;
+
+  const pendingDeliveryCount = orders.filter((o) => resolveOrderStatus(o) !== 'entregue').length;
 
   return (
     <div className="min-h-screen bg-[#00001f] text-neutral-100 flex flex-col relative selection:bg-[#d3a809] selection:text-neutral-950 font-sans">
@@ -385,7 +582,9 @@ export default function App() {
           activeTab={activeTab}
           setActiveTab={handleSwitchTab}
           ordersCount={orders.length}
+          pendingDeliveryCount={pendingDeliveryCount}
           currentUser={currentStaffUser}
+          staffRole={staffRole}
           onSignOut={handleSignOut}
           onOpenGuestComanda={() => handleSwitchTab('comanda')}
         />
@@ -410,7 +609,7 @@ export default function App() {
           staffUnlocked &&
           activeEvent && (
             <>
-              {activeTab === 'admin' && (
+              {activeTab === 'admin' && staffRole !== 'waiter' && (
                 <AdminKitchenView
                   events={events}
                   currentEventId={currentEventId}
@@ -420,10 +619,28 @@ export default function App() {
                   onDeleteOrder={handleDeleteOrder}
                   onViewReceipt={(order) => setModalOrder(order)}
                   onOpenGuestComanda={() => handleSwitchTab('comanda')}
+                  onLogKitchenPrint={handleLogKitchenPrint}
                 />
               )}
 
-              {activeTab === 'event_config' && (
+              {activeTab === 'waiter' && (
+                <WaiterDeliveryView
+                  events={events}
+                  currentEventId={currentEventId}
+                  onSelectEvent={handleSelectEvent}
+                  orders={orders}
+                  masterDatabase={masterDatabase}
+                  staffName={currentStaffUser || 'GARÇOM'}
+                  staffRole={staffRole || 'waiter'}
+                  initialScannedCode={pendingScannedOrder}
+                  onClearInitialScannedCode={() => setPendingScannedOrder(null)}
+                  onActivateAndUpdateOrder={handleActivateAndUpdateOrder}
+                  onMarkDelivered={handleMarkOrderDelivered}
+                  onUnmarkDelivered={handleUnmarkOrderDelivered}
+                />
+              )}
+
+              {activeTab === 'event_config' && staffRole !== 'waiter' && (
                 <EventConfigView
                   events={events}
                   eventLibrary={eventLibrary}
@@ -440,7 +657,7 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'database' && (
+              {activeTab === 'database' && staffRole !== 'waiter' && (
                 <MasterDatabaseView
                   masterDatabase={masterDatabase}
                   onUpdateMasterDatabase={handleUpdateMasterDatabase}
@@ -448,7 +665,7 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'audit_log' && (
+              {activeTab === 'audit_log' && staffRole !== 'waiter' && (
                 <AuditLogView
                   logs={auditLogs}
                   events={eventLibrary}
@@ -470,9 +687,10 @@ export default function App() {
         />
       )}
 
-      {/* MAÎTRE AUTHENTICATION MODAL (FSOUZA, LAUGUSTO, GILSON) */}
+      {/* STAFF AUTHENTICATION MODAL (MAÎTRE OR GARÇOM) */}
       <MaitreGateModal
         open={gateTarget !== null}
+        initialMode={gateTarget === 'waiter' ? 'waiter' : 'maitre'}
         onClose={handleGateClose}
         onSubmit={handleGateSubmit}
       />

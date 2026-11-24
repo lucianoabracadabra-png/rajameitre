@@ -1,4 +1,15 @@
-import type { EventConfig, GuestOrder, MenuItem, AuditLogEntry, StaffUser, EventAnalyticsRecord } from '../types';
+import type {
+  EventConfig,
+  GuestOrder,
+  MenuItem,
+  AuditLogEntry,
+  StaffUser,
+  StaffRole,
+  StaffSession,
+  EventAnalyticsRecord,
+  OrderStatus,
+  OrderTransactionEntry,
+} from '../types';
 import {
   MASTER_MENU_DATABASE,
   INITIAL_EVENTS,
@@ -15,6 +26,8 @@ export const VALID_CREDENTIALS: Record<string, string> = {
   LAUGUSTO: '1234@abcd',
   GILSON: '1234@abcd',
 };
+
+export const WAITER_PASSWORD = '1234@GAR';
 
 const STORAGE_KEYS = {
   SESSION: 'garcon_staff_session',
@@ -42,17 +55,35 @@ export const DEFAULT_SLOTS: CaixaSlot[] = [
 ];
 
 export type StaffSignInResult =
-  | { ok: true; user: StaffUser }
-  | { ok: false; error: 'bad_credentials' };
+  | { ok: true; session: StaffSession }
+  | { ok: false; error: 'bad_credentials' | 'missing_name' };
 
-export async function staffSignIn(username: string, password: string): Promise<StaffSignInResult> {
-  const cleanUser = username.trim().toUpperCase() as StaffUser;
+export async function staffSignIn(
+  username: string,
+  password: string,
+  mode: StaffRole = 'maitre'
+): Promise<StaffSignInResult> {
+  const cleanUser = username.trim().toUpperCase();
   const cleanPass = password.trim();
 
+  if (mode === 'waiter') {
+    if (!cleanUser) {
+      return { ok: false, error: 'missing_name' };
+    }
+    if (cleanPass === WAITER_PASSWORD) {
+      const session: StaffSession = { username: cleanUser, role: 'waiter' };
+      sessionStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(session));
+      addAuditLog(cleanUser, 'LOGIN_GARCOM', `Garçom "${cleanUser}" acessou o sistema de entregas.`);
+      return { ok: true, session };
+    }
+    return { ok: false, error: 'bad_credentials' };
+  }
+
   if (VALID_CREDENTIALS[cleanUser] && VALID_CREDENTIALS[cleanUser] === cleanPass) {
-    sessionStorage.setItem(STORAGE_KEYS.SESSION, cleanUser);
+    const session: StaffSession = { username: cleanUser as StaffUser, role: 'maitre' };
+    sessionStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(session));
     addAuditLog(cleanUser, 'LOGIN_MAITRE', `Acesso autenticado ao painel pelo usuário ${cleanUser}.`);
-    return { ok: true, user: cleanUser };
+    return { ok: true, session };
   }
 
   return { ok: false, error: 'bad_credentials' };
@@ -61,15 +92,33 @@ export async function staffSignIn(username: string, password: string): Promise<S
 export async function staffSignOut(): Promise<void> {
   const current = getStaffSession();
   if (current) {
-    addAuditLog(current, 'LOGOUT_MAITRE', `Sessão encerrada pelo usuário ${current}.`);
+    addAuditLog(
+      current.username,
+      current.role === 'waiter' ? 'LOGOUT_GARCOM' : 'LOGOUT_MAITRE',
+      `Sessão encerrada por ${current.username}.`
+    );
   }
   sessionStorage.removeItem(STORAGE_KEYS.SESSION);
 }
 
-export function getStaffSession(): StaffUser | null {
-  const user = sessionStorage.getItem(STORAGE_KEYS.SESSION);
-  if (user && user in VALID_CREDENTIALS) {
-    return user as StaffUser;
+export function getStaffSession(): StaffSession | null {
+  const raw = sessionStorage.getItem(STORAGE_KEYS.SESSION);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed.username === 'string' &&
+      (parsed.role === 'maitre' || parsed.role === 'waiter')
+    ) {
+      return parsed as StaffSession;
+    }
+  } catch {
+    // Fallback para sessões antigas salvas como string pura
+    if (raw in VALID_CREDENTIALS) {
+      return { username: raw, role: 'maitre' };
+    }
   }
   return null;
 }
@@ -315,28 +364,70 @@ export function saveOrders(orders: GuestOrder[]): void {
   localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders));
 }
 
-export function insertOrder(order: GuestOrder): void {
-  const current = loadOrders();
-  const updated = [order, ...current];
-  saveOrders(updated);
+function formatTimestampShort(): string {
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const dateStr = now.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  return `${dateStr} às ${timeStr}`;
+}
 
-  // Sync to Supabase orders table for permanent storage & analytics
+function buildOrderTx(actor: string, action: string, details: string): OrderTransactionEntry {
+  return {
+    id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: formatTimestampShort(),
+    actor: actor.trim().toUpperCase() || 'SISTEMA',
+    action,
+    details,
+  };
+}
+
+export function resolveOrderStatus(order: GuestOrder): OrderStatus {
+  if (order.status) return order.status;
+  if (order.delivered) return 'entregue';
+  if (order.tableNumber || order.activatedAt) return 'em_producao';
+  return 'aguardando';
+}
+
+function syncOrderUpsert(order: GuestOrder, contextLabel: string, includeCreatedAt = false): void {
   const client = getSupabaseClient();
-  if (client) {
-    void client
-      .from('orders')
-      .upsert({
-        id: order.id,
-        data: order,
-        created_at: new Date().toISOString(),
-      })
-      .then(
-        ({ error }: any) => {
-          if (error) console.warn('Supabase sync (insertOrder):', error.message);
-        },
-        (e: any) => console.warn('Supabase sync failed (insertOrder):', e)
-      );
+  if (!client) return;
+  const payload: Record<string, any> = {
+    id: order.id,
+    data: order,
+  };
+  if (includeCreatedAt) {
+    payload.created_at = new Date().toISOString();
   }
+  void client
+    .from('orders')
+    .upsert(payload)
+    .then(
+      ({ error }: any) => {
+        if (error) console.warn(`Supabase sync (${contextLabel}):`, error.message);
+      },
+      (e: any) => console.warn(`Supabase sync failed (${contextLabel}):`, e)
+    );
+}
+
+export function insertOrder(order: GuestOrder): void {
+  const normalizedOrder: GuestOrder = {
+    ...order,
+    status: order.status || 'aguardando',
+    transactions: order.transactions && order.transactions.length > 0
+      ? order.transactions
+      : [
+          buildOrderTx(
+            'CONVIDADO',
+            'EMISSÃO_COMANDA',
+            `Comanda ${order.code} emitida por "${order.guestName}" (${order.mainDish.name}${order.dessert ? ` + ${order.dessert.name}` : ''}).`
+          ),
+        ],
+  };
+
+  const current = loadOrders();
+  const updated = [normalizedOrder, ...current];
+  saveOrders(updated);
+  syncOrderUpsert(normalizedOrder, 'insertOrder', true);
 }
 
 export function deleteOrder(orderId: string, author: string): boolean {
@@ -347,7 +438,6 @@ export function deleteOrder(orderId: string, author: string): boolean {
   const updated = current.filter((o) => o.id !== orderId);
   saveOrders(updated);
 
-  // Sync delete to Supabase
   const client = getSupabaseClient();
   if (client) {
     void client
@@ -368,6 +458,190 @@ export function deleteOrder(orderId: string, author: string): boolean {
     `Comanda ${target.code} de "${target.guestName}" foi excluída do evento "${target.eventTitle}".`
   );
   return true;
+}
+
+export interface WaiterOrderUpdatePayload {
+  guestName?: string;
+  mainDish?: MenuItem;
+  dessert?: MenuItem | null; // null explicitly removes dessert
+  notes?: string;
+  tableNumber?: string;
+  assignedWaiter?: string;
+  activate?: boolean;
+}
+
+export function activateAndUpdateOrder(
+  orderId: string,
+  updates: WaiterOrderUpdatePayload,
+  actor: string
+): GuestOrder | null {
+  const current = loadOrders();
+  const target = current.find((o) => o.id === orderId);
+  if (!target) return null;
+
+  const cleanActor = actor.trim().toUpperCase() || 'GARÇOM';
+  const currentStatus = resolveOrderStatus(target);
+  const nowLabel = formatTimestampShort();
+
+  const nextGuestName =
+    updates.guestName !== undefined && updates.guestName.trim()
+      ? updates.guestName.trim()
+      : target.guestName;
+  const nextMainDish = updates.mainDish || target.mainDish;
+  const nextDessert =
+    updates.dessert === null
+      ? undefined
+      : updates.dessert !== undefined
+      ? updates.dessert
+      : target.dessert;
+  const nextNotes =
+    updates.notes !== undefined
+      ? updates.notes.trim() || undefined
+      : target.notes;
+  const nextTable =
+    updates.tableNumber !== undefined
+      ? updates.tableNumber.trim() || undefined
+      : target.tableNumber;
+  const nextWaiter =
+    updates.assignedWaiter !== undefined
+      ? updates.assignedWaiter.trim().toUpperCase() || cleanActor
+      : target.assignedWaiter || (updates.activate ? cleanActor : undefined);
+
+  // Build exact change diff for auditability
+  const diffs: string[] = [];
+  if (nextGuestName !== target.guestName) {
+    diffs.push(`Convidado: "${target.guestName}" → "${nextGuestName}"`);
+  }
+  if ((nextTable || '') !== (target.tableNumber || '')) {
+    diffs.push(`Mesa: "${target.tableNumber || 'Sem mesa'}" → "${nextTable || 'Sem mesa'}"`);
+  }
+  if (nextMainDish.name !== target.mainDish.name) {
+    diffs.push(`Prato: "${target.mainDish.name}" → "${nextMainDish.name}"`);
+  }
+  if ((nextDessert?.name || 'Nenhuma') !== (target.dessert?.name || 'Nenhuma')) {
+    diffs.push(`Sobremesa: "${target.dessert?.name || 'Nenhuma'}" → "${nextDessert?.name || 'Nenhuma'}"`);
+  }
+  if ((nextNotes || '') !== (target.notes || '')) {
+    diffs.push(`Obs: "${target.notes || '—'}" → "${nextNotes || '—'}"`);
+  }
+  if ((nextWaiter || '') !== (target.assignedWaiter || '')) {
+    diffs.push(`Garçom: "${target.assignedWaiter || '—'}" → "${nextWaiter || '—'}"`);
+  }
+
+  const shouldActivate = !!updates.activate && currentStatus === 'aguardando';
+  const nextStatus: OrderStatus = shouldActivate ? 'em_producao' : currentStatus;
+
+  const newTransactions: OrderTransactionEntry[] = [...(target.transactions || [])];
+
+  if (diffs.length > 0) {
+    const editSummary = `Alterações em ${target.code} (${nextGuestName}): ${diffs.join(' | ')}.`;
+    newTransactions.unshift(buildOrderTx(cleanActor, 'EDIÇÃO_PEDIDO', editSummary));
+    addAuditLog(cleanActor, 'EDIÇÃO_PEDIDO', editSummary);
+  }
+
+  if (shouldActivate) {
+    const activationSummary = `Pedido ${target.code} de "${nextGuestName}" ATIVADO na cozinha para ${
+      nextTable ? `Mesa ${nextTable.replace(/^mesa\s*/i, '')}` : 'salão'
+    } (Prato: ${nextMainDish.name}) por ${cleanActor}.`;
+    newTransactions.unshift(buildOrderTx(cleanActor, 'ATIVAÇÃO_PEDIDO', activationSummary));
+    addAuditLog(cleanActor, 'ATIVAÇÃO_PEDIDO', activationSummary);
+  }
+
+  const updatedOrder: GuestOrder = {
+    ...target,
+    guestName: nextGuestName,
+    mainDish: nextMainDish,
+    dessert: nextDessert,
+    notes: nextNotes,
+    tableNumber: nextTable,
+    assignedWaiter: nextWaiter,
+    status: nextStatus,
+    activatedAt: shouldActivate ? nowLabel : target.activatedAt,
+    activatedBy: shouldActivate ? cleanActor : target.activatedBy,
+    lastEditedAt: diffs.length > 0 ? nowLabel : target.lastEditedAt,
+    lastEditedBy: diffs.length > 0 ? cleanActor : target.lastEditedBy,
+    transactions: newTransactions.slice(0, 40),
+  };
+
+  const updated = current.map((o) => (o.id === orderId ? updatedOrder : o));
+  saveOrders(updated);
+  syncOrderUpsert(updatedOrder, 'activateAndUpdateOrder');
+  return updatedOrder;
+}
+
+export function markOrderDelivered(
+  orderId: string,
+  waiterName: string,
+  tableNumberOverride?: string
+): GuestOrder | null {
+  const current = loadOrders();
+  const target = current.find((o) => o.id === orderId);
+  if (!target) return null;
+
+  const cleanWaiter = waiterName.trim().toUpperCase() || 'GARÇOM';
+  const nowLabel = formatTimestampShort();
+  const finalTable =
+    tableNumberOverride !== undefined && tableNumberOverride.trim()
+      ? tableNumberOverride.trim()
+      : target.tableNumber;
+
+  const mesaLabel = finalTable ? `Mesa ${finalTable.replace(/^mesa\s*/i, '')}` : 'mesa não informada';
+  const details = `Comanda ${target.code} de "${target.guestName}" (${target.mainDish.name}) marcada como ENTREGUE na ${mesaLabel} por ${cleanWaiter}.`;
+
+  const updatedOrder: GuestOrder = {
+    ...target,
+    status: 'entregue',
+    tableNumber: finalTable,
+    assignedWaiter: target.assignedWaiter || cleanWaiter,
+    activatedAt: target.activatedAt || nowLabel,
+    activatedBy: target.activatedBy || cleanWaiter,
+    delivered: true,
+    deliveredAt: nowLabel,
+    deliveredBy: cleanWaiter,
+    transactions: [
+      buildOrderTx(cleanWaiter, 'ENTREGA_COMANDA', details),
+      ...(target.transactions || []),
+    ].slice(0, 40),
+  };
+
+  const updated = current.map((o) => (o.id === orderId ? updatedOrder : o));
+  saveOrders(updated);
+  syncOrderUpsert(updatedOrder, 'markOrderDelivered');
+
+  addAuditLog(cleanWaiter, 'ENTREGA_COMANDA', details);
+  return updatedOrder;
+}
+
+export function unmarkOrderDelivered(orderId: string, staffName: string): GuestOrder | null {
+  const current = loadOrders();
+  const target = current.find((o) => o.id === orderId);
+  if (!target) return null;
+
+  const cleanActor = staffName.trim().toUpperCase() || 'STAFF';
+  const revertedStatus: OrderStatus =
+    target.tableNumber || target.activatedAt ? 'em_producao' : 'aguardando';
+  const details = `Baixa de entrega estornada na comanda ${target.code} de "${target.guestName}" (retornou para ${
+    revertedStatus === 'em_producao' ? 'Em Produção' : 'Aguardando Mesa'
+  }).`;
+
+  const updatedOrder: GuestOrder = {
+    ...target,
+    status: revertedStatus,
+    delivered: false,
+    deliveredAt: undefined,
+    deliveredBy: undefined,
+    transactions: [
+      buildOrderTx(cleanActor, 'ESTORNO_ENTREGA', details),
+      ...(target.transactions || []),
+    ].slice(0, 40),
+  };
+
+  const updated = current.map((o) => (o.id === orderId ? updatedOrder : o));
+  saveOrders(updated);
+  syncOrderUpsert(updatedOrder, 'unmarkOrderDelivered');
+
+  addAuditLog(cleanActor, 'ESTORNO_ENTREGA', details);
+  return updatedOrder;
 }
 
 /* ------------------------------ Histórico de Auditoria ------------------------------ */
@@ -400,8 +674,8 @@ export function addAuditLog(author: string, action: string, details: string): vo
     details,
   };
 
-  const updated = [newLog, ...current];
-  localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(updated.slice(0, 200)));
+  const updated = [newLog, ...current].slice(0, 500);
+  localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(updated));
 
   // Sync audit logs to Supabase
   const client = getSupabaseClient();
@@ -410,7 +684,7 @@ export function addAuditLog(author: string, action: string, details: string): vo
       .from('app_state')
       .upsert({
         key: 'audit_logs',
-        value: updated.slice(0, 200),
+        value: updated,
         updated_at: new Date().toISOString(),
       })
       .then(

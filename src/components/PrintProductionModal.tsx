@@ -16,6 +16,7 @@ interface PrintProductionModalProps {
     totalDesserts: number;
     specialNotes: { guest: string; note: string; dish: string }[];
   };
+  onLogKitchenPrint?: (mode: 'pdf' | 'texto') => void;
 }
 
 export const PrintProductionModal: React.FC<PrintProductionModalProps> = ({
@@ -24,6 +25,7 @@ export const PrintProductionModal: React.FC<PrintProductionModalProps> = ({
   eventConfig,
   orders,
   productionSummary,
+  onLogKitchenPrint,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -36,6 +38,7 @@ export const PrintProductionModal: React.FC<PrintProductionModalProps> = ({
   const percent = Math.min(100, Math.round((issued / totalReservations) * 100));
 
   const handlePrint = () => {
+    onLogKitchenPrint?.('pdf');
     window.print();
   };
 
@@ -69,6 +72,7 @@ export const PrintProductionModal: React.FC<PrintProductionModalProps> = ({
     }
 
     navigator.clipboard.writeText(summaryText);
+    onLogKitchenPrint?.('texto');
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

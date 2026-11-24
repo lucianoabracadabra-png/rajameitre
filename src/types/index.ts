@@ -76,6 +76,16 @@ export interface EventConfig {
   activeDesserts: MenuItem[];
 }
 
+export type OrderStatus = 'aguardando' | 'em_producao' | 'entregue';
+
+export interface OrderTransactionEntry {
+  id: string;
+  timestamp: string;
+  actor: string;
+  action: string;
+  details: string;
+}
+
 export interface GuestOrder {
   id: string;
   code: string; // Ex: CMD-4091
@@ -92,6 +102,17 @@ export interface GuestOrder {
   totalCost: number; // 0.00
   createdAt: string;
   authCode: string;
+  status?: OrderStatus;
+  tableNumber?: string;
+  assignedWaiter?: string;
+  activatedAt?: string;
+  activatedBy?: string;
+  lastEditedAt?: string;
+  lastEditedBy?: string;
+  delivered?: boolean;
+  deliveredAt?: string;
+  deliveredBy?: string;
+  transactions?: OrderTransactionEntry[];
 }
 
 export interface EventAnalyticsRecord {
@@ -115,7 +136,7 @@ export interface EventAnalyticsRecord {
 export interface AuditLogEntry {
   id: string;
   timestamp: string;
-  author: string; // FSOUZA, LAUGUSTO, GILSON
+  author: string; // FSOUZA, LAUGUSTO, GILSON ou nome do garçom
   action: string;
   details: string;
   analyticsSnapshot?: EventAnalyticsRecord;
@@ -123,6 +144,13 @@ export interface AuditLogEntry {
 
 export type StaffUser = 'FSOUZA' | 'LAUGUSTO' | 'GILSON';
 
+export type StaffRole = 'maitre' | 'waiter';
+
+export interface StaffSession {
+  username: string;
+  role: StaffRole;
+}
+
 export type LanguageMode = 'pt' | 'en';
 
-export type ActiveTab = 'comanda' | 'admin' | 'event_config' | 'database' | 'audit_log';
+export type ActiveTab = 'comanda' | 'admin' | 'waiter' | 'event_config' | 'database' | 'audit_log';
